@@ -1,0 +1,470 @@
+{% extends "base.html" %}
+
+{% block title %}Home - Stock Analysis System{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* 移动端首页优化 */
+    @media (max-width: 768px) {
+        /* 欢迎横幅移动端优化 */
+        .stock-info .card-body {
+            padding: 2rem 1rem;
+        }
+        
+        .stock-info .display-4 {
+            font-size: 2rem;
+        }
+        
+        .stock-info .lead {
+            font-size: 1rem;
+        }
+        
+        .stock-info p {
+            font-size: 0.9rem;
+        }
+        
+        .stock-info .btn {
+            margin-bottom: 0.5rem;
+            width: 100%;
+        }
+        
+        /* 功能卡片移动端优化 */
+        .metric-card .fa-3x {
+            font-size: 2rem;
+        }
+        
+        .metric-card .card-title {
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .metric-card .card-text {
+            font-size: 0.85rem;
+            margin-bottom: 1rem;
+        }
+        
+        .metric-card .btn {
+            font-size: 0.85rem;
+            padding: 0.5rem 1rem;
+        }
+        
+        /* 数据概览卡片优化 */
+        .data-overview-card h3 {
+            font-size: 1.5rem;
+        }
+        
+        .data-overview-card .card-text {
+            font-size: 0.9rem;
+        }
+        
+        /* 系统特性卡片优化 */
+        .feature-card .card-title {
+            font-size: 1rem;
+        }
+        
+        .feature-card .card-text {
+            font-size: 0.85rem;
+        }
+        
+        /* 标题优化 */
+        h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        /* 间距优化 */
+        .mb-4 {
+            margin-bottom: 1.5rem !important;
+        }
+        
+        .mb-5 {
+            margin-bottom: 2rem !important;
+        }
+    }
+    
+    @media (max-width: 576px) {
+        .stock-info .card-body {
+            padding: 1.5rem 0.75rem;
+        }
+        
+        .stock-info .display-4 {
+            font-size: 1.75rem;
+        }
+        
+        .metric-card .fa-3x {
+            font-size: 1.75rem;
+        }
+        
+        .metric-card .card-body {
+            padding: 1rem 0.75rem;
+        }
+        
+        .data-overview-card h3 {
+            font-size: 1.25rem;
+        }
+        
+        h2 {
+            font-size: 1.25rem;
+        }
+    }
+    
+    /* 触摸优化 */
+    @media (hover: none) and (pointer: coarse) {
+        .metric-card {
+            transition: none;
+        }
+        
+        .metric-card:active {
+            transform: scale(0.98);
+        }
+        
+        .btn:active {
+            transform: scale(0.95);
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <!-- 欢迎横幅 -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card stock-info-banner">
+                <div class="card-body text-center py-5">
+                    <h1 class="display-4 mb-3">📈 AI Trading & Backtesting Platform</h1>
+                    <p class="lead">Professional stock analysis platform built with Python Flask</p>
+                    <p class="mb-4">Fundamental analysis, technical analysis, fund flow analysis, chip distribution analysis and more</p>
+                    <div class="d-grid gap-2 d-md-block">
+                        <a href="{{ url_for('main.stocks') }}" class="btn btn-light btn-lg me-md-3 btn-financial">Start Analysis</a>
+                        <!-- Hidden: Stock Screening entry
+                        <a href="{{ url_for('main.screen') }}" class="btn btn-outline-light btn-lg btn-financial">Stock Screening</a>
+                        -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 功能模块 -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2 class="mb-4">🚀 Core Features</h2>
+        </div>
+    </div>
+
+    <div class="row g-3 g-md-4 mb-5">
+        <!-- 股票列表 -->
+        <div class="col-6 col-md-6 col-lg-4">
+            <div class="card metric-card-enhanced h-100 hover-lift">
+                <div class="card-body text-center">
+                    <div class="metric-icon">
+                        <i class="fas fa-list-ul text-primary"></i>
+                    </div>
+                    <h5 class="card-title">Stock List</h5>
+                    <p class="card-text">Browse all stocks with industry and region filters</p>
+                    <a href="{{ url_for('main.stocks') }}" class="btn btn-primary-financial">View Stocks</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- 技术分析 -->
+        <div class="col-6 col-md-6 col-lg-4">
+            <div class="card metric-card-enhanced h-100 hover-lift">
+                <div class="card-body text-center">
+                    <div class="metric-icon">
+                        <i class="fas fa-chart-line text-success"></i>
+                    </div>
+                    <h5 class="card-title">Technical Analysis</h5>
+                    <p class="card-text">Candlestick charts, MACD, KDJ, RSI and more</p>
+                    <a href="{{ url_for('main.analysis') }}" class="btn btn-success-financial">Technical Analysis</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hidden: 选股筛选 / Stock Screening
+        <div class="col-6 col-md-6 col-lg-3">
+            <div class="card metric-card-enhanced h-100 hover-lift">
+                <div class="card-body text-center">
+                    <div class="metric-icon">
+                        <i class="fas fa-filter text-warning"></i>
+                    </div>
+                    <h5 class="card-title">Stock Screening</h5>
+                    <p class="card-text">Multi-dimensional screening to find opportunities</p>
+                    <a href="{{ url_for('main.screen') }}" class="btn btn-warning-financial">Start Screening</a>
+                </div>
+            </div>
+        </div>
+        -->
+
+        <!-- 策略回测 -->
+        <div class="col-6 col-md-6 col-lg-4">
+            <div class="card metric-card-enhanced h-100 hover-lift">
+                <div class="card-body text-center">
+                    <div class="metric-icon">
+                        <i class="fas fa-history text-info"></i>
+                    </div>
+                    <h5 class="card-title">Strategy Backtest</h5>
+                    <p class="card-text">Validate investment strategy performance</p>
+                    <a href="{{ url_for('main.backtest') }}" class="btn btn-primary-financial">Backtest</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 多因子模型系统 -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2 class="mb-4">🧠 Multi-Factor Model System</h2>
+        </div>
+    </div>
+
+    <div class="row g-3 g-md-4 mb-5">
+        <!-- 因子管理 -->
+        <div class="col-6 col-md-6 col-lg-3">
+            <div class="card metric-card-enhanced h-100 hover-lift">
+                <div class="card-body text-center">
+                    <div class="metric-icon">
+                        <i class="fas fa-cogs text-primary"></i>
+                    </div>
+                    <h5 class="card-title">Factor Management</h5>
+                    <p class="card-text">Manage technical, fundamental, and fund flow factors</p>
+                    <a href="/ml-factor" class="btn btn-primary-financial">Factor Management</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- 模型管理 -->
+        <div class="col-6 col-md-6 col-lg-3">
+            <div class="card metric-card-enhanced h-100 hover-lift">
+                <div class="card-body text-center">
+                    <div class="metric-icon">
+                        <i class="fas fa-brain text-success"></i>
+                    </div>
+                    <h5 class="card-title">Model Management</h5>
+                    <p class="card-text">Create and train ML stock selection models</p>
+                    <a href="/ml-factor/models" class="btn btn-success-financial">Model Management</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- 智能查询 -->
+        <div class="col-6 col-md-6 col-lg-3">
+            <div class="card metric-card-enhanced h-100 hover-lift">
+                <div class="card-body text-center">
+                    <div class="metric-icon">
+                        <i class="fas fa-robot text-info"></i>
+                    </div>
+                    <h5 class="card-title">Smart Query</h5>
+                    <p class="card-text">Query stock data with natural language, AI assistant</p>
+                    <a href="/api/text2sql/" class="btn btn-primary-financial">Smart Query</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hidden: 股票评分
+        <div class="col-6 col-md-4 col-lg-2">
+            <div class="card metric-card-enhanced h-100 hover-lift">
+                <div class="card-body text-center">
+                    <div class="metric-icon">
+                        <i class="fas fa-star text-warning"></i>
+                    </div>
+                    <h5 class="card-title">股票评分</h5>
+                    <p class="card-text">基于因子和模型对股票进行评分排名</p>
+                    <a href="/ml-factor/scoring" class="btn btn-warning-financial">股票评分</a>
+                </div>
+            </div>
+        </div>
+        -->
+
+        <!-- Hidden: 投资组合 Portfolio
+        <div class="col-6 col-md-4 col-lg-2">
+            <div class="card metric-card-enhanced h-100 hover-lift">
+                <div class="card-body text-center">
+                    <div class="metric-icon">
+                        <i class="fas fa-briefcase text-info"></i>
+                    </div>
+                    <h5 class="card-title">Portfolio</h5>
+                    <p class="card-text">Build and optimize investment portfolios</p>
+                    <a href="/ml-factor/portfolio" class="btn btn-primary-financial">Portfolio</a>
+                </div>
+            </div>
+        </div>
+        -->
+
+        <!-- 分析报告 -->
+        <div class="col-6 col-md-6 col-lg-3">
+            <div class="card metric-card-enhanced h-100 hover-lift">
+                <div class="card-body text-center">
+                    <div class="metric-icon">
+                        <i class="fas fa-chart-bar text-secondary"></i>
+                    </div>
+                    <h5 class="card-title">Analysis Report</h5>
+                    <p class="card-text">Model performance and factor effectiveness</p>
+                    <a href="/ml-factor/analysis" class="btn btn-primary-financial">Analysis Report</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden: 实时交易分析系统 block
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2 class="mb-4">⚡ 实时交易分析系统</h2>
+        </div>
+    </div>
+
+    <div class="row g-3 g-md-4 mb-5">
+        <div class="col-12 col-md-6 col-lg-4">
+            <div class="card metric-card-enhanced h-100 hover-lift">
+                <div class="card-body text-center">
+                    <div class="metric-icon">
+                        <i class="fas fa-chart-line text-danger"></i>
+                    </div>
+                    <h5 class="card-title">Real-time Trading Analysis</h5>
+                    <p class="card-text">Minute-level data, indicators, signals and risk monitoring</p>
+                    <a href="/realtime-analysis" class="btn btn-danger-financial">Enter Analysis</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-md-6 col-lg-4">
+            <div class="card metric-card-enhanced h-100 hover-lift">
+                <div class="card-body text-center">
+                    <div class="metric-icon">
+                        <i class="fas fa-database text-primary"></i>
+                    </div>
+                    <h5 class="card-title">Real-time Data Management</h5>
+                    <p class="card-text">Minute-level K-line sync, aggregation and quality monitoring</p>
+                    <a href="/realtime-analysis" class="btn btn-primary-financial">Data Management</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-md-6 col-lg-4">
+            <div class="card metric-card-enhanced h-100 hover-lift">
+                <div class="card-body text-center">
+                    <div class="metric-icon">
+                        <i class="fas fa-chart-bar text-success"></i>
+                    </div>
+                    <h5 class="card-title">Real-time Technical Indicators</h5>
+                    <p class="card-text">Multi-period indicators and alert system</p>
+                    <a href="/realtime-analysis/indicators" class="btn btn-success-financial">Indicators</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    -->
+
+    <!-- 数据概览 -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2 class="mb-4">📊 Data Overview</h2>
+        </div>
+    </div>
+
+    <div class="row g-3 g-md-4 mb-5">
+        <div class="col-6 col-md-3">
+            <div class="card card-financial text-center">
+                <div class="card-body">
+                    <h3 class="text-primary number-display" id="total-stocks">--</h3>
+                    <p class="card-text">Total Stocks</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card card-financial text-center">
+                <div class="card-body">
+                    <h3 class="text-success number-display" id="total-industries">--</h3>
+                    <p class="card-text">Industries</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card card-financial text-center">
+                <div class="card-body">
+                    <h3 class="text-warning number-display" id="total-areas">--</h3>
+                    <p class="card-text">Regions</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card card-financial text-center">
+                <div class="card-body">
+                    <h3 class="text-info number-display">7</h3>
+                    <p class="card-text">Data Tables</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 系统特性 -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2 class="mb-4">✨ System Features</h2>
+        </div>
+    </div>
+
+    <div class="row g-3 g-md-4">
+        <div class="col-12 col-md-6">
+            <div class="card card-financial h-100">
+                <div class="card-body">
+                    <h5 class="card-title">🔄 Real-time Data</h5>
+                    <p class="card-text">Auto-updating data for timely analysis</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-md-6">
+            <div class="card card-financial h-100">
+                <div class="card-body">
+                    <h5 class="card-title">📈 Multi-dimensional Analysis</h5>
+                    <p class="card-text">Fundamental, technical, fund flow and chip analysis</p>
+                </div>
+            </div>
+        </div>
+        <!-- Hidden: Smart Screening highlight (paired with Stock Screening)
+        <div class="col-12 col-md-4">
+            <div class="card card-financial h-100">
+                <div class="card-body">
+                    <h5 class="card-title">🎯 Smart Screening</h5>
+                    <p class="card-text">Multi-condition screening for quick opportunities</p>
+                </div>
+            </div>
+        </div>
+        -->
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// 页面加载完成后获取统计数据
+document.addEventListener('DOMContentLoaded', async function() {
+    try {
+        // 获取股票总数
+        const stocksResponse = await apiRequest('/stocks?page_size=1');
+        if (stocksResponse.code === 200) {
+            document.getElementById('total-stocks').textContent = stocksResponse.data.total;
+        }
+
+        // 获取行业数量
+        const industriesResponse = await apiRequest('/industries');
+        if (industriesResponse.code === 200) {
+            document.getElementById('total-industries').textContent = industriesResponse.data.length;
+        }
+
+        // 获取地域数量
+        const areasResponse = await apiRequest('/areas');
+        if (areasResponse.code === 200) {
+            document.getElementById('total-areas').textContent = areasResponse.data.length;
+        }
+    } catch (error) {
+        console.error('Failed to load statistics:', error);
+        // 移动端友好的错误提示
+        if (typeof MobileUtils !== 'undefined') {
+            MobileUtils.showMobileToast('Data load failed, please refresh', 'error');
+        }
+    }
+});
+</script>
+{% endblock %} 

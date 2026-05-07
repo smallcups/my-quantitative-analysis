@@ -1,0 +1,1072 @@
+{% extends "base.html" %}
+
+{% block title %}Stock Screening - Stock Analysis System{% endblock %}
+
+{% block content %}
+<div class="container">
+    <!-- 页面标题 -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="h2">🎯 Stock Screening</h1>
+            <p class="text-muted">Multi-dimensional screening based on stock data, discover investment opportunities</p>
+        </div>
+    </div>
+
+    <!-- 筛选条件 -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Filter Conditions</h5>
+                </div>
+                <div class="card-body">
+                    <form id="screen-form">
+                        <!-- 基本条件 -->
+                        <div class="row g-3 mb-4">
+                            <div class="col-12">
+                                <h6 class="text-primary">📊 Basic Conditions</h6>
+                            </div>
+                            <div class="col-md-3">
+                                <label for="industry-filter" class="form-label">Industry</label>
+                                <select class="form-select" id="industry-filter">
+                                    <option value="">All Industries</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label for="area-filter" class="form-label">Region</label>
+                                <select class="form-select" id="area-filter">
+                                    <option value="">All Regions</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label for="market-filter" class="form-label">Market</label>
+                                <select class="form-select" id="market-filter">
+                                    <option value="">All Markets</option>
+                                    <option value="SZ">Shenzhen</option>
+                                    <option value="SH">Shanghai</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label for="date-filter" class="form-label">Data Date</label>
+                                <input type="date" class="form-control" id="date-filter" title="Select specific date, leave empty for latest data">
+                            </div>
+                        </div>
+
+                        <!-- 估值指标 -->
+                        <div class="row g-3 mb-4">
+                            <div class="col-12">
+                                <h6 class="text-primary">💰 Valuation Metrics</h6>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">PE Ratio</label>
+                                <div class="row g-2">
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="pe-min" placeholder="Min" step="0.1">
+                                    </div>
+                                    <div class="col-auto">-</div>
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="pe-max" placeholder="Max" step="0.1">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">PB Ratio</label>
+                                <div class="row g-2">
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="pb-min" placeholder="Min" step="0.1">
+                                    </div>
+                                    <div class="col-auto">-</div>
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="pb-max" placeholder="Max" step="0.1">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">PS Ratio</label>
+                                <div class="row g-2">
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="ps-min" placeholder="Min" step="0.1">
+                                    </div>
+                                    <div class="col-auto">-</div>
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="ps-max" placeholder="Max" step="0.1">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">股息率(%)</label>
+                                <div class="row g-2">
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="dv-min" placeholder="Min" step="0.1">
+                                    </div>
+                                    <div class="col-auto">-</div>
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="dv-max" placeholder="Max" step="0.1">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 市值和交易指标 -->
+                        <div class="row g-3 mb-4">
+                            <div class="col-12">
+                                <h6 class="text-primary">📈 Market Cap & Trading</h6>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Total Market Cap (10K)</label>
+                                <div class="row g-2">
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="mv-min" placeholder="Min">
+                                    </div>
+                                    <div class="col-auto">-</div>
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="mv-max" placeholder="Max">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Float Market Cap (10K)</label>
+                                <div class="row g-2">
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="circ-mv-min" placeholder="Min">
+                                    </div>
+                                    <div class="col-auto">-</div>
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="circ-mv-max" placeholder="Max">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Turnover Rate (%)</label>
+                                <div class="row g-2">
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="turnover-min" placeholder="Min" step="0.1">
+                                    </div>
+                                    <div class="col-auto">-</div>
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="turnover-max" placeholder="Max" step="0.1">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Volume Ratio</label>
+                                <div class="row g-2">
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="volume-ratio-min" placeholder="Min" step="0.1">
+                                    </div>
+                                    <div class="col-auto">-</div>
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="volume-ratio-max" placeholder="Max" step="0.1">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 技术指标 -->
+                        <div class="row g-3 mb-4">
+                            <div class="col-12">
+                                <h6 class="text-primary">📊 Technical Indicators</h6>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">RSI(6)</label>
+                                <div class="row g-2">
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="rsi6-min" placeholder="Min" step="0.1">
+                                    </div>
+                                    <div class="col-auto">-</div>
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="rsi6-max" placeholder="Max" step="0.1">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">KDJ-K</label>
+                                <div class="row g-2">
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="kdj-k-min" placeholder="Min" step="0.1">
+                                    </div>
+                                    <div class="col-auto">-</div>
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="kdj-k-max" placeholder="Max" step="0.1">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">MACD</label>
+                                <div class="row g-2">
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="macd-min" placeholder="Min" step="0.01">
+                                    </div>
+                                    <div class="col-auto">-</div>
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="macd-max" placeholder="Max" step="0.01">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">CCI</label>
+                                <div class="row g-2">
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="cci-min" placeholder="Min" step="0.1">
+                                    </div>
+                                    <div class="col-auto">-</div>
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="cci-max" placeholder="Max" step="0.1">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 资金流向 -->
+                        <div class="row g-3 mb-4">
+                            <div class="col-12">
+                                <h6 class="text-primary">💸 Money Flow</h6>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Net Inflow (10K)</label>
+                                <div class="row g-2">
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="net-amount-min" placeholder="Min">
+                                    </div>
+                                    <div class="col-auto">-</div>
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="net-amount-max" placeholder="Max">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Large Buy %</label>
+                                <div class="row g-2">
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="lg-buy-rate-min" placeholder="Min" step="0.1">
+                                    </div>
+                                    <div class="col-auto">-</div>
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="lg-buy-rate-max" placeholder="Max" step="0.1">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">5-day Net Inflow (10K)</label>
+                                <div class="row g-2">
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="net-d5-amount-min" placeholder="Min">
+                                    </div>
+                                    <div class="col-auto">-</div>
+                                    <div class="col">
+                                        <input type="number" class="form-control" id="net-d5-amount-max" placeholder="Max">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 动态查询条件 -->
+                        <div class="row g-3 mb-4">
+                            <div class="col-12">
+                                <h6 class="text-primary">🔧 Dynamic Query</h6>
+                                <p class="text-muted small">Support field comparison, e.g.: MA5 > MA10, PE < PB</p>
+                            </div>
+                            <div id="dynamic-conditions">
+                                <!-- 动态条件将在这里添加 -->
+                            </div>
+                            <div class="col-12">
+                                <button type="button" class="btn btn-outline-primary btn-sm" id="add-condition">
+                                    <i class="fas fa-plus"></i> Add Condition
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 操作按钮 -->
+                        <div class="row">
+                            <div class="col-12">
+                                <button type="submit" class="btn btn-primary me-2">
+                                    <i class="fas fa-search"></i> Start Screening
+                                </button>
+                                <button type="button" class="btn btn-secondary me-2" id="reset-screen">
+                                    <i class="fas fa-undo"></i> Reset
+                                </button>
+                                <button type="button" class="btn btn-info me-2" id="save-template">
+                                    <i class="fas fa-save"></i> Save Template
+                                </button>
+                                <button type="button" class="btn btn-outline-info" id="load-template">
+                                    <i class="fas fa-folder-open"></i> Load Template
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 筛选结果 -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Screening Results</h5>
+                    <div>
+                        <span class="badge bg-primary me-2" id="result-count">0</span>
+                        <button class="btn btn-sm btn-outline-success" id="export-results" style="display: none;">
+                            <i class="fas fa-download"></i> Export
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="screen-results">
+                        <div class="text-center py-5">
+                            <p class="text-muted">Set filter conditions and click "Start Screening"</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// 全局变量
+let dynamicConditionCount = 0;
+let currentResults = [];
+
+// 可用字段定义
+const AVAILABLE_FIELDS = {
+    'Basic Info': {
+        'daily_close': 'Close',
+        'factor_change': 'Change',
+        'factor_pct_change': 'Change %'
+    },
+    'Valuation': {
+        'pe': 'PE Ratio',
+        'pe_ttm': 'PE (TTM)',
+        'pb': 'PB Ratio',
+        'ps': 'PS Ratio',
+        'ps_ttm': 'PS (TTM)',
+        'dv_ratio': 'Dividend Yield %',
+        'dv_ttm': 'Dividend Yield (TTM) %'
+    },
+    'Market Cap': {
+        'total_mv': 'Total Market Cap (10K)',
+        'circ_mv': 'Float Market Cap (10K)',
+        'turnover_rate': 'Turnover Rate %',
+        'turnover_rate_f': 'Turnover Rate (Free Float)',
+        'volume_ratio': 'Volume Ratio',
+        'factor_vol': 'Volume',
+        'factor_amount': 'Amount'
+    },
+    'Technical': {
+        'factor_macd_dif': 'MACD DIF',
+        'factor_macd_dea': 'MACD DEA',
+        'factor_macd': 'MACD',
+        'factor_kdj_k': 'KDJ K',
+        'factor_kdj_d': 'KDJ D',
+        'factor_kdj_j': 'KDJ J',
+        'factor_rsi_6': 'RSI(6)',
+        'factor_rsi_12': 'RSI(12)',
+        'factor_rsi_24': 'RSI(24)',
+        'factor_boll_upper': 'Bollinger Upper',
+        'factor_boll_mid': 'Bollinger Mid',
+        'factor_boll_lower': 'Bollinger Lower',
+        'factor_cci': 'CCI'
+    },
+    'MA': {
+        'ma5': 'MA5',
+        'ma10': 'MA10',
+        'ma20': 'MA20',
+        'ma30': 'MA30',
+        'ma60': 'MA60',
+        'ma120': 'MA120'
+    },
+    'Money Flow': {
+        'moneyflow_net_amount': 'Net Inflow',
+        'moneyflow_net_d5_amount': '5-day Net Inflow',
+        'moneyflow_buy_lg_amount': 'Large Buy',
+        'moneyflow_buy_lg_amount_rate': 'Large Buy %',
+        'moneyflow_buy_md_amount': 'Medium Buy',
+        'moneyflow_buy_md_amount_rate': 'Medium Buy %',
+        'moneyflow_buy_sm_amount': 'Small Buy',
+        'moneyflow_buy_sm_amount_rate': 'Small Buy %'
+    }
+};
+
+// 操作符定义
+const OPERATORS = {
+    '>': 'Greater than',
+    '>=': 'Greater or equal',
+    '<': 'Less than',
+    '<=': 'Less or equal',
+    '=': 'Equal',
+    '!=': 'Not equal'
+};
+
+// 页面加载完成后初始化
+document.addEventListener('DOMContentLoaded', function() {
+    loadFilterOptions();
+    
+    // 绑定事件
+    document.getElementById('screen-form').addEventListener('submit', handleScreen);
+    document.getElementById('reset-screen').addEventListener('click', resetScreen);
+    document.getElementById('add-condition').addEventListener('click', addDynamicCondition);
+    document.getElementById('save-template').addEventListener('click', saveTemplate);
+    document.getElementById('load-template').addEventListener('click', loadTemplate);
+    document.getElementById('export-results').addEventListener('click', exportResults);
+});
+
+// 加载筛选选项
+async function loadFilterOptions() {
+    try {
+        // 加载行业列表
+        const industriesResponse = await apiRequest('/industries');
+        if (industriesResponse.code === 200) {
+            const select = document.getElementById('industry-filter');
+            industriesResponse.data.forEach(industry => {
+                const option = document.createElement('option');
+                option.value = industry;
+                option.textContent = industry;
+                select.appendChild(option);
+            });
+        }
+
+        // 加载地域列表
+        const areasResponse = await apiRequest('/areas');
+        if (areasResponse.code === 200) {
+            const select = document.getElementById('area-filter');
+            areasResponse.data.forEach(area => {
+                const option = document.createElement('option');
+                option.value = area;
+                option.textContent = area;
+                select.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('加载筛选选项失败:', error);
+    }
+}
+
+// 添加动态查询条件
+function addDynamicCondition() {
+    dynamicConditionCount++;
+    const container = document.getElementById('dynamic-conditions');
+    
+    const conditionDiv = document.createElement('div');
+    conditionDiv.className = 'col-12 mb-3';
+    conditionDiv.id = `condition-${dynamicConditionCount}`;
+    
+    conditionDiv.innerHTML = `
+        <div class="card border-light">
+            <div class="card-body py-2">
+                <div class="row g-2 align-items-center">
+                    <div class="col-md-3">
+                        <select class="form-select form-select-sm" id="field-a-${dynamicConditionCount}">
+                            <option value="">Select Field A</option>
+                            ${generateFieldOptions()}
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <select class="form-select form-select-sm" id="operator-${dynamicConditionCount}">
+                            ${Object.entries(OPERATORS).map(([key, value]) => 
+                                `<option value="${key}">${value}</option>`
+                            ).join('')}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <select class="form-select form-select-sm" id="field-b-${dynamicConditionCount}">
+                            <option value="">Select Field B</option>
+                            <option value="__value__">Fixed Value</option>
+                            ${generateFieldOptions()}
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <input type="number" class="form-control form-control-sm" id="value-${dynamicConditionCount}" 
+                               placeholder="Value" step="0.01" style="display: none;">
+                    </div>
+                    <div class="col-md-2">
+                        <button type="button" class="btn btn-outline-danger btn-sm" 
+                                onclick="removeDynamicCondition(${dynamicConditionCount})">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    container.appendChild(conditionDiv);
+    
+    // 绑定字段B变化事件
+    document.getElementById(`field-b-${dynamicConditionCount}`).addEventListener('change', function() {
+        const valueInput = document.getElementById(`value-${dynamicConditionCount}`);
+        if (this.value === '__value__') {
+            valueInput.style.display = 'block';
+            valueInput.required = true;
+        } else {
+            valueInput.style.display = 'none';
+            valueInput.required = false;
+            valueInput.value = '';
+        }
+    });
+}
+
+// 生成字段选项HTML
+function generateFieldOptions() {
+    let html = '';
+    for (const [category, fields] of Object.entries(AVAILABLE_FIELDS)) {
+        html += `<optgroup label="${category}">`;
+        for (const [key, label] of Object.entries(fields)) {
+            html += `<option value="${key}">${label}</option>`;
+        }
+        html += '</optgroup>';
+    }
+    return html;
+}
+
+// 移除动态查询条件
+function removeDynamicCondition(id) {
+    const element = document.getElementById(`condition-${id}`);
+    if (element) {
+        element.remove();
+    }
+}
+
+// 处理筛选
+function handleScreen(event) {
+    event.preventDefault();
+    
+    // 收集基础筛选条件
+    const criteria = {
+        // 基本条件
+        industry: document.getElementById('industry-filter').value,
+        area: document.getElementById('area-filter').value,
+        market: document.getElementById('market-filter').value,
+        trade_date: document.getElementById('date-filter').value,
+        
+        // 估值指标
+        pe_min: document.getElementById('pe-min').value,
+        pe_max: document.getElementById('pe-max').value,
+        pb_min: document.getElementById('pb-min').value,
+        pb_max: document.getElementById('pb-max').value,
+        ps_min: document.getElementById('ps-min').value,
+        ps_max: document.getElementById('ps-max').value,
+        dv_min: document.getElementById('dv-min').value,
+        dv_max: document.getElementById('dv-max').value,
+        
+        // 市值和交易
+        mv_min: document.getElementById('mv-min').value,
+        mv_max: document.getElementById('mv-max').value,
+        circ_mv_min: document.getElementById('circ-mv-min').value,
+        circ_mv_max: document.getElementById('circ-mv-max').value,
+        turnover_min: document.getElementById('turnover-min').value,
+        turnover_max: document.getElementById('turnover-max').value,
+        volume_ratio_min: document.getElementById('volume-ratio-min').value,
+        volume_ratio_max: document.getElementById('volume-ratio-max').value,
+        
+        // 技术指标
+        rsi6_min: document.getElementById('rsi6-min').value,
+        rsi6_max: document.getElementById('rsi6-max').value,
+        kdj_k_min: document.getElementById('kdj-k-min').value,
+        kdj_k_max: document.getElementById('kdj-k-max').value,
+        macd_min: document.getElementById('macd-min').value,
+        macd_max: document.getElementById('macd-max').value,
+        cci_min: document.getElementById('cci-min').value,
+        cci_max: document.getElementById('cci-max').value,
+        
+        // 资金流向
+        net_amount_min: document.getElementById('net-amount-min').value,
+        net_amount_max: document.getElementById('net-amount-max').value,
+        lg_buy_rate_min: document.getElementById('lg-buy-rate-min').value,
+        lg_buy_rate_max: document.getElementById('lg-buy-rate-max').value,
+        net_d5_amount_min: document.getElementById('net-d5-amount-min').value,
+        net_d5_amount_max: document.getElementById('net-d5-amount-max').value
+    };
+    
+    // 收集动态查询条件
+    const dynamicConditions = [];
+    for (let i = 1; i <= dynamicConditionCount; i++) {
+        const fieldA = document.getElementById(`field-a-${i}`);
+        const operator = document.getElementById(`operator-${i}`);
+        const fieldB = document.getElementById(`field-b-${i}`);
+        const value = document.getElementById(`value-${i}`);
+        
+        if (fieldA && fieldA.value && operator && operator.value && fieldB && fieldB.value) {
+            const condition = {
+                field_a: fieldA.value,
+                operator: operator.value,
+                field_b: fieldB.value === '__value__' ? null : fieldB.value,
+                value: fieldB.value === '__value__' ? value.value : null
+            };
+            
+            // 验证条件完整性
+            if (condition.field_b || condition.value) {
+                dynamicConditions.push(condition);
+            }
+        }
+    }
+    
+    criteria.dynamic_conditions = dynamicConditions;
+    
+    performScreen(criteria);
+}
+
+// 执行筛选
+async function performScreen(criteria) {
+    showLoading('screen-results');
+    
+    try {
+        console.log('发送筛选请求:', criteria);
+        
+        // 调用增强的筛选API
+        const response = await apiRequest('/analysis/screen', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            data: criteria
+        });
+        
+        console.log('筛选响应:', response);
+        
+        if (response.code === 200) {
+            currentResults = response.data.stocks;
+            renderScreenResults(response.data.stocks, criteria);
+            document.getElementById('result-count').textContent = response.data.total;
+            
+            // 显示导出按钮
+            if (response.data.stocks.length > 0) {
+                document.getElementById('export-results').style.display = 'inline-block';
+            }
+            
+            // 显示是否有更多结果
+            if (response.data.has_more) {
+                showMoreResultsHint();
+            }
+        } else {
+            showError('screen-results', response.message || 'Screening failed');
+        }
+    } catch (error) {
+        showError('screen-results', 'Screening failed, please check network');
+        console.error('筛选失败:', error);
+    }
+}
+
+// 渲染筛选结果
+function renderScreenResults(stocks, criteria) {
+    const container = document.getElementById('screen-results');
+    
+    if (stocks.length === 0) {
+        container.innerHTML = '<div class="text-center py-4"><p class="text-muted">No stocks match the criteria</p></div>';
+        return;
+    }
+    
+    const html = `
+        <div class="mb-3">
+            <small class="text-muted">Filter: ${formatCriteria(criteria)}</small>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover table-sm">
+                <thead class="table-light">
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Name</th>
+                        <th>Industry</th>
+                        <th>Region</th>
+                        <th>Close</th>
+                        <th>Change %</th>
+                        <th>PE</th>
+                        <th>PB</th>
+                        <th>总市值(万)</th>
+                        <th>换手率(%)</th>
+                        <th>净流入(万)</th>
+                        <th>Date</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${stocks.map(stock => `
+                        <tr>
+                            <td><code>${stock.symbol || stock.ts_code}</code></td>
+                            <td><strong>${stock.stock_name || stock.name}</strong></td>
+                            <td><span class="badge bg-secondary">${stock.industry || '--'}</span></td>
+                            <td>${stock.area || '--'}</td>
+                            <td class="text-end">${stock.daily_close ? formatNumber(stock.daily_close, 2) : '--'}</td>
+                            <td class="text-end ${getChangeClass(stock.factor_pct_change)}">
+                                ${stock.factor_pct_change ? formatNumber(stock.factor_pct_change, 2) + '%' : '--'}
+                            </td>
+                            <td class="text-end">${stock.pe ? formatNumber(stock.pe, 2) : '--'}</td>
+                            <td class="text-end">${stock.pb ? formatNumber(stock.pb, 2) : '--'}</td>
+                            <td class="text-end">${stock.total_mv ? formatNumber(stock.total_mv, 0) : '--'}</td>
+                            <td class="text-end">${stock.turnover_rate ? formatNumber(stock.turnover_rate, 2) : '--'}</td>
+                            <td class="text-end ${getChangeClass(stock.moneyflow_net_amount)}">
+                                ${stock.moneyflow_net_amount ? formatNumber(stock.moneyflow_net_amount, 0) : '--'}
+                            </td>
+                            <td>${stock.trade_date || '--'}</td>
+                            <td>
+                                <a href="/stock/${stock.ts_code}" class="btn btn-sm btn-primary" target="_blank">Details</a>
+                                <button class="btn btn-sm btn-outline-success ms-1" onclick="addToAnalysis('${stock.ts_code}')">Analysis</button>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+    
+    container.innerHTML = html;
+}
+
+// 获取涨跌颜色类
+function getChangeClass(value) {
+    if (!value) return '';
+    return parseFloat(value) >= 0 ? 'text-success' : 'text-danger';
+}
+
+// 格式化筛选条件
+function formatCriteria(criteria) {
+    const conditions = [];
+    
+    // 基本条件
+    if (criteria.industry) conditions.push(`行业=${criteria.industry}`);
+    if (criteria.area) conditions.push(`地域=${criteria.area}`);
+    if (criteria.market) {
+        const marketName = criteria.market === 'SZ' ? 'Shenzhen' : criteria.market === 'SH' ? 'Shanghai' : criteria.market;
+        conditions.push(`市场=${marketName}`);
+    }
+    if (criteria.trade_date) conditions.push(`数据日期=${criteria.trade_date}`);
+    
+    // 数值范围条件
+    const rangeFields = [
+        ['pe_min', 'pe_max', 'PE'],
+        ['pb_min', 'pb_max', 'PB'],
+        ['ps_min', 'ps_max', 'PS'],
+        ['mv_min', 'mv_max', 'Market Cap'],
+        ['turnover_min', 'turnover_max', 'Turnover']
+    ];
+    
+    rangeFields.forEach(([minKey, maxKey, label]) => {
+        if (criteria[minKey] || criteria[maxKey]) {
+            conditions.push(`${label}=${criteria[minKey] || 'Any'}-${criteria[maxKey] || 'Any'}`);
+        }
+    });
+    
+    // 动态条件
+    if (criteria.dynamic_conditions && criteria.dynamic_conditions.length > 0) {
+        criteria.dynamic_conditions.forEach(condition => {
+            const fieldALabel = getFieldLabel(condition.field_a);
+            const operatorLabel = OPERATORS[condition.operator];
+            const fieldBLabel = condition.field_b ? getFieldLabel(condition.field_b) : condition.value;
+            conditions.push(`${fieldALabel} ${operatorLabel} ${fieldBLabel}`);
+        });
+    }
+    
+    return conditions.length > 0 ? conditions.join(', ') : 'No specific conditions';
+}
+
+// 获取字段标签
+function getFieldLabel(fieldKey) {
+    for (const category of Object.values(AVAILABLE_FIELDS)) {
+        if (category[fieldKey]) {
+            return category[fieldKey];
+        }
+    }
+    return fieldKey;
+}
+
+// 重置筛选
+function resetScreen() {
+    document.getElementById('screen-form').reset();
+    
+    // 清除动态条件
+    document.getElementById('dynamic-conditions').innerHTML = '';
+    dynamicConditionCount = 0;
+    
+    // 重置结果
+    document.getElementById('screen-results').innerHTML = `
+        <div class="text-center py-5">
+            <p class="text-muted">请设置筛选条件并点击"开始筛选"</p>
+        </div>
+    `;
+    document.getElementById('result-count').textContent = '0';
+    document.getElementById('export-results').style.display = 'none';
+    currentResults = [];
+}
+
+// 保存筛选模板
+function saveTemplate() {
+    // 收集当前筛选条件
+    const template = {
+        name: prompt('Enter template name:'),
+        conditions: getCurrentCriteria(),
+        created_at: new Date().toISOString()
+    };
+    
+    if (template.name) {
+        // 保存到localStorage
+        const templates = JSON.parse(localStorage.getItem('screenTemplates') || '[]');
+        templates.push(template);
+        localStorage.setItem('screenTemplates', JSON.stringify(templates));
+        
+        alert('Template saved successfully!');
+    }
+}
+
+// 加载筛选模板
+function loadTemplate() {
+    const templates = JSON.parse(localStorage.getItem('screenTemplates') || '[]');
+    
+    if (templates.length === 0) {
+        alert('No saved templates');
+        return;
+    }
+    
+    // 创建模板选择对话框
+    let templateOptions = templates.map((template, index) => 
+        `${index + 1}. ${template.name} (${new Date(template.created_at).toLocaleDateString()})`
+    ).join('\n');
+    
+    const choice = prompt(`Select template to load:\n${templateOptions}\n\nEnter number:`);
+    
+    if (choice) {
+        const index = parseInt(choice) - 1;
+        if (index >= 0 && index < templates.length) {
+            const template = templates[index];
+            applyTemplate(template.conditions);
+            alert(`Template "${template.name}" loaded successfully!`);
+        } else {
+            alert('Invalid selection');
+        }
+    }
+}
+
+// 应用模板条件
+function applyTemplate(conditions) {
+    // 重置表单
+    resetScreen();
+    
+    // 应用基本条件
+    if (conditions.industry) document.getElementById('industry-filter').value = conditions.industry;
+    if (conditions.area) document.getElementById('area-filter').value = conditions.area;
+    if (conditions.market) document.getElementById('market-filter').value = conditions.market;
+    if (conditions.trade_date) document.getElementById('date-filter').value = conditions.trade_date;
+    
+    // 应用估值指标
+    if (conditions.pe_min) document.getElementById('pe-min').value = conditions.pe_min;
+    if (conditions.pe_max) document.getElementById('pe-max').value = conditions.pe_max;
+    if (conditions.pb_min) document.getElementById('pb-min').value = conditions.pb_min;
+    if (conditions.pb_max) document.getElementById('pb-max').value = conditions.pb_max;
+    if (conditions.ps_min) document.getElementById('ps-min').value = conditions.ps_min;
+    if (conditions.ps_max) document.getElementById('ps-max').value = conditions.ps_max;
+    if (conditions.dv_min) document.getElementById('dv-min').value = conditions.dv_min;
+    if (conditions.dv_max) document.getElementById('dv-max').value = conditions.dv_max;
+    
+    // 应用市值和交易指标
+    if (conditions.mv_min) document.getElementById('mv-min').value = conditions.mv_min;
+    if (conditions.mv_max) document.getElementById('mv-max').value = conditions.mv_max;
+    if (conditions.circ_mv_min) document.getElementById('circ-mv-min').value = conditions.circ_mv_min;
+    if (conditions.circ_mv_max) document.getElementById('circ-mv-max').value = conditions.circ_mv_max;
+    if (conditions.turnover_min) document.getElementById('turnover-min').value = conditions.turnover_min;
+    if (conditions.turnover_max) document.getElementById('turnover-max').value = conditions.turnover_max;
+    if (conditions.volume_ratio_min) document.getElementById('volume-ratio-min').value = conditions.volume_ratio_min;
+    if (conditions.volume_ratio_max) document.getElementById('volume-ratio-max').value = conditions.volume_ratio_max;
+    
+    // 应用技术指标
+    if (conditions.rsi6_min) document.getElementById('rsi6-min').value = conditions.rsi6_min;
+    if (conditions.rsi6_max) document.getElementById('rsi6-max').value = conditions.rsi6_max;
+    if (conditions.kdj_k_min) document.getElementById('kdj-k-min').value = conditions.kdj_k_min;
+    if (conditions.kdj_k_max) document.getElementById('kdj-k-max').value = conditions.kdj_k_max;
+    if (conditions.macd_min) document.getElementById('macd-min').value = conditions.macd_min;
+    if (conditions.macd_max) document.getElementById('macd-max').value = conditions.macd_max;
+    if (conditions.cci_min) document.getElementById('cci-min').value = conditions.cci_min;
+    if (conditions.cci_max) document.getElementById('cci-max').value = conditions.cci_max;
+    
+    // 应用资金流向
+    if (conditions.net_amount_min) document.getElementById('net-amount-min').value = conditions.net_amount_min;
+    if (conditions.net_amount_max) document.getElementById('net-amount-max').value = conditions.net_amount_max;
+    if (conditions.lg_buy_rate_min) document.getElementById('lg-buy-rate-min').value = conditions.lg_buy_rate_min;
+    if (conditions.lg_buy_rate_max) document.getElementById('lg-buy-rate-max').value = conditions.lg_buy_rate_max;
+    if (conditions.net_d5_amount_min) document.getElementById('net-d5-amount-min').value = conditions.net_d5_amount_min;
+    if (conditions.net_d5_amount_max) document.getElementById('net-d5-amount-max').value = conditions.net_d5_amount_max;
+    
+    // 应用动态条件
+    if (conditions.dynamic_conditions && conditions.dynamic_conditions.length > 0) {
+        conditions.dynamic_conditions.forEach(condition => {
+            addDynamicCondition();
+            const currentId = dynamicConditionCount;
+            
+            document.getElementById(`field-a-${currentId}`).value = condition.field_a;
+            document.getElementById(`operator-${currentId}`).value = condition.operator;
+            
+            if (condition.field_b) {
+                document.getElementById(`field-b-${currentId}`).value = condition.field_b;
+            } else if (condition.value !== null) {
+                document.getElementById(`field-b-${currentId}`).value = '__value__';
+                document.getElementById(`value-${currentId}`).style.display = 'block';
+                document.getElementById(`value-${currentId}`).value = condition.value;
+            }
+        });
+    }
+}
+
+// 导出结果
+function exportResults() {
+    if (currentResults.length === 0) {
+        alert('No data to export');
+        return;
+    }
+    
+    // 转换为CSV格式
+    const headers = ['Symbol', 'Name', 'Industry', 'Region', 'Close', 'Change %', 'PE', 'PB', 'Market Cap', 'Turnover %', 'Net Flow', 'Date'];
+    const csvContent = [
+        headers.join(','),
+        ...currentResults.map(stock => [
+            stock.symbol || stock.ts_code,
+            stock.stock_name || stock.name,
+            stock.industry || '',
+            stock.area || '',
+            stock.daily_close || '',
+            stock.factor_pct_change || '',
+            stock.pe || '',
+            stock.pb || '',
+            stock.total_mv || '',
+            stock.turnover_rate || '',
+            stock.moneyflow_net_amount || '',
+            stock.trade_date || ''
+        ].join(','))
+    ].join('\n');
+    
+    // 下载文件
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `stock_screening_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+}
+
+// 获取当前筛选条件
+function getCurrentCriteria() {
+    const criteria = {
+        // 基本条件
+        industry: document.getElementById('industry-filter').value,
+        area: document.getElementById('area-filter').value,
+        market: document.getElementById('market-filter').value,
+        trade_date: document.getElementById('date-filter').value,
+        
+        // 估值指标
+        pe_min: document.getElementById('pe-min').value,
+        pe_max: document.getElementById('pe-max').value,
+        pb_min: document.getElementById('pb-min').value,
+        pb_max: document.getElementById('pb-max').value,
+        ps_min: document.getElementById('ps-min').value,
+        ps_max: document.getElementById('ps-max').value,
+        dv_min: document.getElementById('dv-min').value,
+        dv_max: document.getElementById('dv-max').value,
+        
+        // 市值和交易
+        mv_min: document.getElementById('mv-min').value,
+        mv_max: document.getElementById('mv-max').value,
+        circ_mv_min: document.getElementById('circ-mv-min').value,
+        circ_mv_max: document.getElementById('circ-mv-max').value,
+        turnover_min: document.getElementById('turnover-min').value,
+        turnover_max: document.getElementById('turnover-max').value,
+        volume_ratio_min: document.getElementById('volume-ratio-min').value,
+        volume_ratio_max: document.getElementById('volume-ratio-max').value,
+        
+        // 技术指标
+        rsi6_min: document.getElementById('rsi6-min').value,
+        rsi6_max: document.getElementById('rsi6-max').value,
+        kdj_k_min: document.getElementById('kdj-k-min').value,
+        kdj_k_max: document.getElementById('kdj-k-max').value,
+        macd_min: document.getElementById('macd-min').value,
+        macd_max: document.getElementById('macd-max').value,
+        cci_min: document.getElementById('cci-min').value,
+        cci_max: document.getElementById('cci-max').value,
+        
+        // 资金流向
+        net_amount_min: document.getElementById('net-amount-min').value,
+        net_amount_max: document.getElementById('net-amount-max').value,
+        lg_buy_rate_min: document.getElementById('lg-buy-rate-min').value,
+        lg_buy_rate_max: document.getElementById('lg-buy-rate-max').value,
+        net_d5_amount_min: document.getElementById('net-d5-amount-min').value,
+        net_d5_amount_max: document.getElementById('net-d5-amount-max').value
+    };
+    
+    // 收集动态查询条件
+    const dynamicConditions = [];
+    for (let i = 1; i <= dynamicConditionCount; i++) {
+        const fieldA = document.getElementById(`field-a-${i}`);
+        const operator = document.getElementById(`operator-${i}`);
+        const fieldB = document.getElementById(`field-b-${i}`);
+        const value = document.getElementById(`value-${i}`);
+        
+        if (fieldA && fieldA.value && operator && operator.value && fieldB && fieldB.value) {
+            const condition = {
+                field_a: fieldA.value,
+                operator: operator.value,
+                field_b: fieldB.value === '__value__' ? null : fieldB.value,
+                value: fieldB.value === '__value__' ? value.value : null
+            };
+            
+            // 验证条件完整性
+            if (condition.field_b || condition.value) {
+                dynamicConditions.push(condition);
+            }
+        }
+    }
+    
+    criteria.dynamic_conditions = dynamicConditions;
+    return criteria;
+}
+
+// 显示更多结果提示
+function showMoreResultsHint() {
+    const container = document.getElementById('screen-results');
+    const hint = document.createElement('div');
+    hint.className = 'alert alert-info mt-3';
+    hint.innerHTML = '<i class="fas fa-info-circle"></i> Results limited to 200. Use more precise filters for better results.';
+    container.appendChild(hint);
+}
+
+// 添加到技术分析
+function addToAnalysis(tsCode) {
+    window.open(`/analysis?stock=${tsCode}`, '_blank');
+}
+
+// 显示加载状态
+function showLoading(containerId) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = `
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Screening...</span>
+            </div>
+            <p class="mt-3 text-muted">Screening stocks, please wait...</p>
+        </div>
+    `;
+}
+
+// 显示错误
+function showError(containerId, message) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = `
+        <div class="alert alert-danger">
+            <i class="fas fa-exclamation-triangle"></i> ${message}
+        </div>
+    `;
+}
+
+// 工具函数
+function formatNumber(num, decimals = 2) {
+    if (num === null || num === undefined || isNaN(num)) return '--';
+    return Number(num).toLocaleString('zh-CN', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+    });
+}
+
+function formatPercent(num) {
+    if (num === null || num === undefined || isNaN(num)) return '--';
+    const sign = num >= 0 ? '+' : '';
+    return sign + Number(num).toFixed(2) + '%';
+}
+</script>
+{% endblock %} 

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Test Page</title>
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.5.0/dist/axios.min.js"></script>
+</head>
+<body>
+    <h1>API Test Page</h1>
+    <div id="results"></div>
+    
+    <script>
+        // API request function
+        async function apiRequest(url, options = {}) {
+            try {
+                console.log('Sending API request:', `/api${url}`);
+                const response = await axios({
+                    url: `/api${url}`,
+                    method: options.method || 'GET',
+                    data: options.data,
+                    params: options.params,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    }
+                });
+                console.log('API response:', response.data);
+                return response.data;
+            } catch (error) {
+                console.error('API request failed:', error);
+                throw error;
+            }
+        }
+
+        // Test API calls
+        async function testAPI() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<p>Testing API...</p>';
+            
+            try {
+                // Test stock basic info
+                console.log('=== Testing stock basic info ===');
+                const stockInfo = await apiRequest('/stocks/000001.SZ');
+                console.log('Stock info:', stockInfo);
+                
+                // Test history data
+                console.log('=== Testing history data ===');
+                const historyData = await apiRequest('/stocks/000001.SZ/history?limit=5');
+                console.log('History data:', historyData);
+                
+                // Test technical factors
+                console.log('=== Testing technical factors ===');
+                const factorsData = await apiRequest('/stocks/000001.SZ/factors?limit=5');
+                console.log('Technical factors:', factorsData);
+                
+                // Test money flow
+                console.log('=== Testing money flow ===');
+                const moneyflowData = await apiRequest('/stocks/000001.SZ/moneyflow?limit=5');
+                console.log('Money flow:', moneyflowData);
+                
+                // Test chip distribution
+                console.log('=== Testing chip distribution ===');
+                const cyqData = await apiRequest('/stocks/000001.SZ/cyq?limit=5');
+                console.log('Chip distribution:', cyqData);
+                
+                resultsDiv.innerHTML = `
+                    <h2>Test Results</h2>
+                    <h3>Stock Info</h3>
+                    <pre>${JSON.stringify(stockInfo, null, 2)}</pre>
+                    <h3>History (${historyData.data ? historyData.data.length : 0} records)</h3>
+                    <pre>${JSON.stringify(historyData, null, 2)}</pre>
+                    <h3>Factors (${factorsData.data ? factorsData.data.length : 0} records)</h3>
+                    <pre>${JSON.stringify(factorsData, null, 2)}</pre>
+                    <h3>Money Flow (${moneyflowData.data ? moneyflowData.data.length : 0} records)</h3>
+                    <pre>${JSON.stringify(moneyflowData, null, 2)}</pre>
+                    <h3>Chip Distribution (${cyqData.data ? cyqData.data.length : 0} records)</h3>
+                    <pre>${JSON.stringify(cyqData, null, 2)}</pre>
+                `;
+                
+            } catch (error) {
+                console.error('Test failed:', error);
+                resultsDiv.innerHTML = `<p style="color: red;">Test failed: ${error.message}</p>`;
+            }
+        }
+        
+        // Auto test on page load
+        window.onload = testAPI;
+    </script>
+</body>
+</html> 

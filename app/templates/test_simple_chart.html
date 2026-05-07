@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}Simple Chart Test - Stock Analysis System{% endblock %}
+
+{% block extra_css %}
+<style>
+.chart-container {
+    width: 100%;
+    height: 400px;
+    margin: 20px 0;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="h2">📊 Simple Chart Test</h1>
+            <p class="text-muted">Test page for chart rendering</p>
+        </div>
+    </div>
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Chart Container</h5>
+                </div>
+                <div class="card-body">
+                    <div id="test-chart" class="chart-container"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    if (typeof echarts !== 'undefined') {
+        const chart = echarts.init(document.getElementById('test-chart'));
+        chart.setOption({
+            title: { text: 'Test Chart' },
+            xAxis: { type: 'category', data: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] },
+            yAxis: { type: 'value' },
+            series: [{ type: 'line', data: [150, 230, 224, 218, 135, 147, 260] }]
+        });
+    }
+});
+</script>
+{% endblock %}

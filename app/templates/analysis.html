@@ -1,0 +1,1319 @@
+{% extends "base.html" %}
+
+{% block title %}Technical Analysis - Stock Analysis System{% endblock %}
+
+{% block extra_css %}
+<style>
+.chart-container {
+    width: 100%;
+    height: 400px;
+    position: relative;
+}
+.indicator-chart {
+    width: 100%;
+    height: 400px;
+    position: relative;
+}
+.loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+}
+.metric-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+.metric-value {
+    font-size: 2rem;
+    font-weight: bold;
+}
+.metric-label {
+    font-size: 0.9rem;
+    opacity: 0.8;
+}
+.chart-tabs {
+    border-bottom: 1px solid #dee2e6;
+    margin-bottom: 20px;
+}
+.chart-tab {
+    padding: 10px 20px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    display: inline-block;
+    margin-right: 10px;
+    transition: all 0.3s;
+}
+.chart-tab.active {
+    border-bottom-color: #007bff;
+    color: #007bff;
+    font-weight: bold;
+}
+.chart-tab:hover {
+    background-color: #f8f9fa;
+}
+#main-chart, #indicator-chart {
+    width: 100%;
+    height: 400px;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <!-- Page Title -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="h2">📈 Technical Analysis</h1>
+            <p class="text-muted">Professional candlestick charts and technical indicator analysis</p>
+        </div>
+    </div>
+
+    <!-- Stock Selection -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <form id="stock-form" class="row g-3">
+                        <div class="col-md-4">
+                            <label for="stock-input" class="form-label">Symbol</label>
+                            <input type="text" class="form-control" id="stock-input" placeholder="Enter symbol, e.g.: 000001.SZ" maxlength="9" value="000001.SZ">
+                            <div class="form-text">Format: 000001.SZ (Shenzhen), 600000.SH (Shanghai)</div>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="period-select" class="form-label">Period</label>
+                            <select class="form-select" id="period-select">
+                                <option value="30">30 days</option>
+                                <option value="60" selected>60 days</option>
+                                <option value="120">120 days</option>
+                                <option value="250">250 days</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="chart-type-select" class="form-label">Chart Type</label>
+                            <select class="form-select" id="chart-type-select">
+                                <option value="candlestick">Candlestick</option>
+                                <option value="line">Line</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">&nbsp;</label>
+                            <button type="submit" class="btn btn-primary d-block w-100">
+                                <i class="fas fa-chart-line"></i> Analyze
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stock Info Card -->
+    <div id="stock-info-section" class="row mb-4" style="display: none;">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <div id="stock-info-content"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Key Metrics -->
+    <div id="metrics-section" class="row mb-4" style="display: none;">
+        <div class="col-md-3">
+            <div class="metric-card text-center">
+                <div class="metric-value" id="current-price">--</div>
+                <div class="metric-label">Current Price</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="metric-card text-center">
+                <div class="metric-value" id="price-change">--</div>
+                <div class="metric-label">Change %</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="metric-card text-center">
+                <div class="metric-value" id="volume">--</div>
+                <div class="metric-label">Volume</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="metric-card text-center">
+                <div class="metric-value" id="turnover">--</div>
+                <div class="metric-label">Turnover</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Chart Area -->
+    <div id="main-chart-section" class="row mb-4" style="display: none;">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">📊 Price Chart</h5>
+                        <div class="btn-group btn-group-sm" role="group">
+                            <button type="button" class="btn btn-outline-primary active" onclick="switchMainChart('price')">Price</button>
+                            <button type="button" class="btn btn-outline-primary" onclick="switchMainChart('volume')">Volume</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="main-chart" class="chart-container"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Technical Indicators Chart -->
+    <div id="indicators-section" class="row" style="display: none;">
+        <!-- 图表选项卡 -->
+        <div class="col-12 mb-3">
+            <div class="chart-tabs">
+                <div class="chart-tab active" onclick="switchIndicatorChart('macd')">MACD</div>
+                <div class="chart-tab" onclick="switchIndicatorChart('kdj')">KDJ</div>
+                <div class="chart-tab" onclick="switchIndicatorChart('rsi')">RSI</div>
+                <div class="chart-tab" onclick="switchIndicatorChart('boll')">Bollinger Bands</div>
+            </div>
+        </div>
+
+        <!-- 指标图表容器 -->
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0" id="indicator-title">📈 MACD Indicator</h6>
+                </div>
+                <div class="card-body">
+                    <div id="indicator-chart" class="indicator-chart"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Data Table -->
+    <div id="data-section" class="row mt-4" style="display: none;">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0">📋 Details</h6>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover" id="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Open</th>
+                                    <th>High</th>
+                                    <th>Low</th>
+                                    <th>Close</th>
+                                    <th>Volume</th>
+                                    <th>Change %</th>
+                                    <th>RSI</th>
+                                    <th>MACD</th>
+                                </tr>
+                            </thead>
+                            <tbody id="data-table-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentStock = null;
+let currentPeriod = 60;
+let historyData = [];
+let factorsData = [];
+let chartType = 'candlestick';
+let currentIndicator = 'macd';
+let currentMainChart = 'price';
+
+// ECharts实例
+let mainChart = null;
+let indicatorChart = null;
+
+// 页面加载完成后初始化
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM加载完成，开始初始化...');
+    console.log('ECharts是否可用:', typeof echarts !== 'undefined');
+    console.log('Axios是否可用:', typeof axios !== 'undefined');
+    
+    // 检查URL参数中是否有股票代码
+    const urlParams = new URLSearchParams(window.location.search);
+    const stockFromUrl = urlParams.get('stock');
+    if (stockFromUrl) {
+        document.getElementById('stock-input').value = stockFromUrl.toUpperCase();
+        currentStock = stockFromUrl.toUpperCase();
+        console.log('从URL获取股票代码:', currentStock);
+    }
+    
+    // 绑定事件
+    const stockForm = document.getElementById('stock-form');
+    if (stockForm) {
+        stockForm.addEventListener('submit', handleAnalysis);
+        console.log('表单事件绑定成功');
+    } else {
+        console.error('股票表单未找到');
+    }
+    
+    // 绑定股票代码输入框事件
+    const stockInput = document.getElementById('stock-input');
+    if (stockInput) {
+        stockInput.addEventListener('input', handleStockInputChange);
+        stockInput.addEventListener('blur', validateStockCode);
+    }
+    
+    // 延迟初始化图表容器，确保DOM完全渲染
+    setTimeout(() => {
+        initCharts();
+    }, 100);
+});
+
+// 初始化图表容器
+function initCharts() {
+    console.log('开始初始化图表...');
+    
+    // 检查ECharts是否可用
+    if (typeof echarts === 'undefined') {
+        console.error('ECharts未加载');
+        return;
+    }
+    
+    // 初始化主图表
+    const mainChartDom = document.getElementById('main-chart');
+    if (mainChartDom) {
+        console.log('找到主图表容器，尺寸:', mainChartDom.offsetWidth, 'x', mainChartDom.offsetHeight);
+        
+        // 确保容器有明确的尺寸
+        mainChartDom.style.width = '100%';
+        mainChartDom.style.height = '400px';
+        
+        try {
+            // 直接初始化图表
+            mainChart = echarts.init(mainChartDom);
+            console.log('主图表初始化成功');
+            
+            // 测试渲染一个简单图表
+            const testOption = {
+                title: { text: 'Loading data...' },
+                xAxis: { type: 'category', data: [] },
+                yAxis: { type: 'value' },
+                series: [{ type: 'line', data: [] }]
+            };
+            mainChart.setOption(testOption);
+            console.log('主图表测试渲染完成');
+        } catch (error) {
+            console.error('主图表初始化失败:', error);
+        }
+    } else {
+        console.error('主图表容器未找到');
+    }
+    
+    // 初始化指标图表
+    const indicatorChartDom = document.getElementById('indicator-chart');
+    if (indicatorChartDom) {
+        console.log('找到指标图表容器，尺寸:', indicatorChartDom.offsetWidth, 'x', indicatorChartDom.offsetHeight);
+        
+        // 确保容器有明确的尺寸
+        indicatorChartDom.style.width = '100%';
+        indicatorChartDom.style.height = '400px';
+        
+        try {
+            // 直接初始化图表
+            indicatorChart = echarts.init(indicatorChartDom);
+            console.log('指标图表初始化成功');
+            
+            // 测试渲染一个简单图表
+            const testOption = {
+                title: { text: 'Loading data...' },
+                xAxis: { type: 'category', data: [] },
+                yAxis: { type: 'value' },
+                series: [{ type: 'line', data: [] }]
+            };
+            indicatorChart.setOption(testOption);
+            console.log('指标图表测试渲染完成');
+        } catch (error) {
+            console.error('指标图表初始化失败:', error);
+        }
+    } else {
+        console.error('指标图表容器未找到');
+    }
+    
+    // 窗口大小改变时重新调整图表
+    window.addEventListener('resize', function() {
+        setTimeout(() => {
+            if (mainChart) {
+                mainChart.resize();
+                console.log('主图表已调整尺寸');
+            }
+            if (indicatorChart) {
+                indicatorChart.resize();
+                console.log('指标图表已调整尺寸');
+            }
+        }, 100);
+    });
+}
+
+// 处理股票代码输入变化
+function handleStockInputChange(event) {
+    const input = event.target;
+    let value = input.value.toUpperCase();
+    
+    // 自动格式化股票代码
+    if (value.length === 6 && !value.includes('.')) {
+        // 根据股票代码前缀自动添加后缀
+        if (value.startsWith('0') || value.startsWith('3')) {
+            value += '.SZ'; // 深圳
+        } else if (value.startsWith('6')) {
+            value += '.SH'; // 上海
+        }
+        input.value = value;
+    }
+    
+    currentStock = value;
+}
+
+// 验证股票代码格式
+function validateStockCode() {
+    const input = document.getElementById('stock-input');
+    const value = input.value.trim();
+    
+    if (value && !isValidStockCode(value)) {
+        input.classList.add('is-invalid');
+        showTooltip(input, 'Please enter valid symbol format, e.g.: 000001.SZ or 600000.SH');
+    } else {
+        input.classList.remove('is-invalid');
+        hideTooltip(input);
+    }
+}
+
+// 检查股票代码格式是否正确
+function isValidStockCode(code) {
+    const pattern = /^[0-9]{6}\.(SZ|SH)$/;
+    return pattern.test(code);
+}
+
+// 显示提示信息
+function showTooltip(element, message) {
+    hideTooltip(element); // 先清除已有的提示
+    
+    const tooltip = document.createElement('div');
+    tooltip.className = 'invalid-feedback d-block';
+    tooltip.textContent = message;
+    tooltip.id = 'stock-code-tooltip';
+    
+    element.parentNode.appendChild(tooltip);
+}
+
+// 隐藏提示信息
+function hideTooltip(element) {
+    const existingTooltip = document.getElementById('stock-code-tooltip');
+    if (existingTooltip) {
+        existingTooltip.remove();
+    }
+}
+
+// 处理分析请求
+async function handleAnalysis(event) {
+    event.preventDefault();
+    
+    const tsCode = document.getElementById('stock-input').value.trim().toUpperCase();
+    const period = document.getElementById('period-select').value;
+    chartType = document.getElementById('chart-type-select').value;
+    
+    if (!tsCode) {
+        alert('Please enter stock symbol');
+        return;
+    }
+    
+    if (!isValidStockCode(tsCode)) {
+        alert('Please enter valid symbol format, e.g.: 000001.SZ or 600000.SH');
+        return;
+    }
+    
+    currentStock = tsCode;
+    currentPeriod = period;
+    
+    // 显示加载状态
+    showAnalysisLoading();
+    
+    try {
+        // 并行加载数据
+        const [stockInfoResponse, historyResponse, factorsResponse] = await Promise.all([
+            apiRequest(`/stocks/${tsCode}`).catch(() => ({ code: 404, data: null })),
+            apiRequest(`/stocks/${tsCode}/history?limit=${period}`),
+            apiRequest(`/stocks/${tsCode}/factors?limit=${period}`)
+        ]);
+        
+        // 检查历史数据和技术因子数据是否成功获取（这两个是必需的）
+        if (historyResponse.code === 200 && factorsResponse.code === 200) {
+            historyData = historyResponse.data || [];
+            factorsData = factorsResponse.data || [];
+            
+            if (historyData.length === 0) {
+                throw new Error('No historical data for this stock');
+            }
+            
+            // 渲染所有组件（股票信息可能为空，但不影响技术分析）
+            renderStockInfo(stockInfoResponse.code === 200 ? stockInfoResponse.data : null);
+            renderMetrics(historyData);
+            renderMainChart();
+            renderIndicatorChart();
+            renderDataTable(historyData, factorsData);
+            
+            // 显示所有区域
+            showAnalysisResults();
+        } else {
+            if (historyResponse.code !== 200) {
+                throw new Error('Unable to fetch historical data, please check symbol');
+            } else {
+                throw new Error('Unable to fetch technical indicator data');
+            }
+        }
+    } catch (error) {
+        console.error('分析失败:', error);
+        alert(error.message || 'Analysis failed, please check symbol');
+        showAnalysisError();
+    }
+}
+
+// 显示分析加载状态
+function showAnalysisLoading() {
+    if (mainChart) {
+        mainChart.showLoading('default', {
+            text: 'Loading data...',
+            color: '#007bff',
+            textColor: '#000',
+            maskColor: 'rgba(255, 255, 255, 0.8)',
+            zlevel: 0
+        });
+    }
+    if (indicatorChart) {
+        indicatorChart.showLoading();
+    }
+}
+
+// 显示分析结果
+function showAnalysisResults() {
+    document.getElementById('stock-info-section').style.display = 'block';
+    document.getElementById('metrics-section').style.display = 'block';
+    document.getElementById('main-chart-section').style.display = 'block';
+    document.getElementById('indicators-section').style.display = 'block';
+    document.getElementById('data-section').style.display = 'block';
+    
+    if (mainChart) mainChart.hideLoading();
+    if (indicatorChart) indicatorChart.hideLoading();
+}
+
+// 显示分析错误
+function showAnalysisError() {
+    if (mainChart) {
+        mainChart.hideLoading();
+        mainChart.clear();
+        mainChart.setOption({
+            title: {
+                text: 'Data load failed',
+                left: 'center',
+                top: 'center',
+                textStyle: {
+                    color: '#999'
+                }
+            }
+        });
+    }
+}
+
+// 渲染股票信息
+function renderStockInfo(stock) {
+    const container = document.getElementById('stock-info-content');
+    
+    // 如果没有获取到股票信息，显示基本信息
+    if (!stock) {
+        container.innerHTML = `
+            <div class="row align-items-center">
+                <div class="col-md-8">
+                    <h4 class="mb-2">${currentStock} <small class="text-muted">Symbol</small></h4>
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle"></i> 
+                        Unable to fetch stock details, but technical analysis is available
+                    </div>
+                </div>
+                <div class="col-md-4 text-end">
+                    <button class="btn btn-outline-primary btn-sm me-2" onclick="window.open('/stock/${currentStock}', '_blank')">
+                        <i class="fas fa-external-link-alt"></i> Details
+                    </button>
+                    <button class="btn btn-outline-success btn-sm" onclick="addToWatchlist()">
+                        <i class="fas fa-star"></i> Watchlist
+                    </button>
+                </div>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = `
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <h4 class="mb-2">${stock.name || currentStock} <small class="text-muted">(${stock.ts_code || currentStock})</small></h4>
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <small class="text-muted">Industry</small><br>
+                        <span class="badge bg-secondary">${stock.industry || '--'}</span>
+                    </div>
+                    <div class="col-md-3">
+                        <small class="text-muted">Region</small><br>
+                        <span class="badge bg-info">${stock.area || '--'}</span>
+                    </div>
+                    <div class="col-md-3">
+                        <small class="text-muted">List Date</small><br>
+                        <strong>${stock.list_date || '--'}</strong>
+                    </div>
+                    <div class="col-md-3">
+                        <small class="text-muted">Market</small><br>
+                        <span class="badge ${(stock.ts_code || currentStock).includes('SH') ? 'bg-danger' : 'bg-success'}">
+                            ${(stock.ts_code || currentStock).includes('SH') ? 'Shanghai' : 'Shenzhen'}
+                        </span>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4 text-end">
+                <button class="btn btn-outline-primary btn-sm me-2" onclick="window.open('/stock/${currentStock}', '_blank')">
+                        <i class="fas fa-external-link-alt"></i> Details
+                </button>
+                <button class="btn btn-outline-success btn-sm" onclick="addToWatchlist()">
+                        <i class="fas fa-star"></i> Watchlist
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+// 渲染关键指标
+function renderMetrics(data) {
+    if (!data || data.length === 0) return;
+    
+    const latest = data[0];
+    const previous = data[1];
+    
+    const currentPrice = latest.close || 0;
+    const priceChange = previous ? ((currentPrice - previous.close) / previous.close * 100) : 0;
+    const volume = latest.vol || 0;
+    const turnover = latest.amount || 0;
+    
+    document.getElementById('current-price').textContent = formatNumber(currentPrice, 2);
+    document.getElementById('price-change').textContent = formatPercent(priceChange);
+    document.getElementById('price-change').className = `metric-value ${priceChange >= 0 ? 'text-success' : 'text-danger'}`;
+    document.getElementById('volume').textContent = formatNumber(volume / 10000, 1) + 'K';
+    document.getElementById('turnover').textContent = formatNumber(turnover / 100000000, 2) + 'M';
+}
+
+// 渲染主图表
+function renderMainChart() {
+    if (!historyData || historyData.length === 0) {
+        console.log('主图表渲染失败: 没有历史数据');
+        return;
+    }
+    
+    if (!mainChart) {
+        console.log('主图表渲染失败: 图表实例不存在，尝试重新初始化');
+        const mainChartDom = document.getElementById('main-chart');
+        if (mainChartDom) {
+            mainChart = echarts.init(mainChartDom);
+            console.log('主图表重新初始化成功');
+        } else {
+            console.error('主图表容器未找到');
+            return;
+        }
+    }
+    
+    if (currentMainChart === 'price') {
+        renderPriceChart();
+    } else {
+        renderVolumeChart();
+    }
+}
+
+// 渲染价格图表
+function renderPriceChart() {
+    console.log('开始渲染价格图表，图表类型:', chartType);
+    console.log('历史数据条数:', historyData.length);
+    
+    // 后端已经返回正序数据，直接使用
+    const dates = historyData.map(item => item.trade_date);
+    const klineData = historyData.map(item => [item.open, item.close, item.low, item.high]);
+    const lineData = historyData.map(item => item.close);
+    
+    console.log('处理后的数据:', {
+        dates: dates.slice(0, 3),
+        klineData: klineData.slice(0, 3),
+        lineData: lineData.slice(0, 3)
+    });
+    
+    const option = {
+        title: {
+            text: `${currentStock} Price Trend`,
+            left: 'left'
+        },
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: {
+                type: 'cross'
+            },
+            formatter: function(params) {
+                const data = params[0];
+                if (chartType === 'candlestick') {
+                    const values = data.data;
+                    return `${data.name}<br/>
+                            Open: ${values[0]}<br/>
+                            Close: ${values[1]}<br/>
+                            Low: ${values[2]}<br/>
+                            High: ${values[3]}`;
+                } else {
+                    return `${data.name}<br/>Close: ${data.value}`;
+                }
+            }
+        },
+        legend: {
+            data: [chartType === 'candlestick' ? 'Candlestick' : 'Close'],
+            top: 30
+        },
+        grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '15%',
+            containLabel: true
+        },
+        xAxis: {
+            type: 'category',
+            data: dates,
+            scale: true,
+            boundaryGap: false,
+            axisLine: { onZero: false },
+            splitLine: { show: false },
+            min: 'dataMin',
+            max: 'dataMax'
+        },
+        yAxis: {
+            scale: true,
+            splitArea: {
+                show: true
+            }
+        },
+        dataZoom: [
+            {
+                type: 'inside',
+                start: 50,
+                end: 100
+            },
+            {
+                show: true,
+                type: 'slider',
+                top: '90%',
+                start: 50,
+                end: 100
+            }
+        ],
+        series: [{
+            name: chartType === 'candlestick' ? 'Candlestick' : 'Close',
+            type: chartType === 'candlestick' ? 'candlestick' : 'line',
+            data: chartType === 'candlestick' ? klineData : lineData,
+            itemStyle: chartType === 'candlestick' ? {
+                color: '#ef232a',
+                color0: '#14b143',
+                borderColor: '#ef232a',
+                borderColor0: '#14b143'
+            } : {
+                color: '#5470c6'
+            },
+            markPoint: {
+                label: {
+                    formatter: function (param) {
+                        return param != null ? Math.round(param.value * 100) / 100 + '' : '';
+                    }
+                },
+                data: [
+                    {
+                        name: 'Max',
+                        type: 'max',
+                        valueDim: chartType === 'candlestick' ? 'highest' : 'y'
+                    },
+                    {
+                        name: 'Min',
+                        type: 'min',
+                        valueDim: chartType === 'candlestick' ? 'lowest' : 'y'
+                    }
+                ]
+            }
+        }]
+    };
+    
+    console.log('设置价格图表选项...');
+    mainChart.setOption(option, true);
+    console.log('价格图表选项设置完成');
+    
+    // 强制调整图表尺寸
+    setTimeout(() => {
+        mainChart.resize();
+        console.log('价格图表尺寸调整完成');
+    }, 100);
+}
+
+// 渲染成交量图表
+function renderVolumeChart() {
+    // 后端已经返回正序数据，直接使用
+    const dates = historyData.map(item => item.trade_date);
+    const volumeData = historyData.map(item => item.vol);
+    
+    const option = {
+        title: {
+            text: `${currentStock} Volume`,
+            left: 'left'
+        },
+        tooltip: {
+            trigger: 'axis',
+            formatter: function(params) {
+                const data = params[0];
+                return `${data.name}<br/>Volume: ${formatNumber(data.value / 10000, 1)}K`;
+            }
+        },
+        legend: {
+            data: ['Volume'],
+            top: 30
+        },
+        grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '15%',
+            containLabel: true
+        },
+        xAxis: {
+            type: 'category',
+            data: dates
+        },
+        yAxis: {
+            type: 'value',
+            axisLabel: {
+                formatter: function(value) {
+                    return formatNumber(value / 10000, 1) + 'K';
+                }
+            }
+        },
+        dataZoom: [
+            {
+                type: 'inside',
+                start: 50,
+                end: 100
+            },
+            {
+                show: true,
+                type: 'slider',
+                top: '90%',
+                start: 50,
+                end: 100
+            }
+        ],
+        series: [{
+            name: 'Volume',
+            type: 'bar',
+            data: volumeData,
+            itemStyle: {
+                color: '#91cc75'
+            }
+        }]
+    };
+    
+    mainChart.setOption(option, true);
+    // 强制调整图表尺寸
+    setTimeout(() => {
+        mainChart.resize();
+    }, 100);
+}
+
+// 渲染指标图表
+function renderIndicatorChart() {
+    if (!factorsData || factorsData.length === 0) {
+        console.log('指标图表渲染失败: 没有技术因子数据');
+        return;
+    }
+    
+    if (!indicatorChart) {
+        console.log('指标图表渲染失败: 图表实例不存在，尝试重新初始化');
+        const indicatorChartDom = document.getElementById('indicator-chart');
+        if (indicatorChartDom) {
+            indicatorChart = echarts.init(indicatorChartDom);
+            console.log('指标图表重新初始化成功');
+        } else {
+            console.error('指标图表容器未找到');
+            return;
+        }
+    }
+    
+    console.log('开始渲染指标图表:', currentIndicator, '数据条数:', factorsData.length);
+    
+    switch(currentIndicator) {
+        case 'macd':
+            renderMACDChart();
+            break;
+        case 'kdj':
+            renderKDJChart();
+            break;
+        case 'rsi':
+            renderRSIChart();
+            break;
+        case 'boll':
+            renderBollChart();
+            break;
+    }
+}
+
+// 渲染MACD图表
+function renderMACDChart() {
+    // 后端已经返回正序数据，直接使用
+    const dates = factorsData.map(item => item.trade_date);
+    const macdData = factorsData.map(item => item.macd || 0);
+    const deaData = factorsData.map(item => item.macd_dea || 0);
+    const difData = factorsData.map(item => item.macd_dif || 0);
+    
+    console.log('MACD数据:', {
+        dates: dates.slice(0, 3),
+        macd: macdData.slice(0, 3),
+        dea: deaData.slice(0, 3),
+        dif: difData.slice(0, 3)
+    });
+    
+    const option = {
+        title: {
+            text: 'MACD Indicator',
+            left: 'left'
+        },
+        tooltip: {
+            trigger: 'axis'
+        },
+        legend: {
+            data: ['MACD', 'DEA', 'DIF'],
+            top: 30
+        },
+        grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '3%',
+            containLabel: true
+        },
+        xAxis: {
+            type: 'category',
+            data: dates
+        },
+        yAxis: {
+            type: 'value'
+        },
+        series: [
+            {
+                name: 'MACD',
+                type: 'bar',
+                data: macdData,
+                itemStyle: {
+                    color: function(params) {
+                        return params.value >= 0 ? '#ef232a' : '#14b143';
+                    }
+                }
+            },
+            {
+                name: 'DEA',
+                type: 'line',
+                data: deaData,
+                smooth: true,
+                itemStyle: {
+                    color: '#fac858'
+                }
+            },
+            {
+                name: 'DIF',
+                type: 'line',
+                data: difData,
+                smooth: true,
+                itemStyle: {
+                    color: '#5470c6'
+                }
+            }
+        ]
+    };
+    
+    indicatorChart.setOption(option, true);
+    // 强制调整图表尺寸
+    setTimeout(() => {
+        indicatorChart.resize();
+    }, 100);
+}
+
+// 渲染KDJ图表
+function renderKDJChart() {
+    // 后端已经返回正序数据，直接使用
+    const dates = factorsData.map(item => item.trade_date);
+    const kData = factorsData.map(item => item.kdj_k || 0);
+    const dData = factorsData.map(item => item.kdj_d || 0);
+    const jData = factorsData.map(item => item.kdj_j || 0);
+    
+    const option = {
+        title: {
+            text: 'KDJ Indicator',
+            left: 'left'
+        },
+        tooltip: {
+            trigger: 'axis'
+        },
+        legend: {
+            data: ['K', 'D', 'J'],
+            top: 30
+        },
+        grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '3%',
+            containLabel: true
+        },
+        xAxis: {
+            type: 'category',
+            data: dates
+        },
+        yAxis: {
+            type: 'value',
+            min: 0,
+            max: 100,
+            axisLine: {
+                lineStyle: {
+                    color: '#999'
+                }
+            },
+            splitLine: {
+                lineStyle: {
+                    color: ['#eee']
+                }
+            }
+        },
+        series: [
+            {
+                name: 'K',
+                type: 'line',
+                data: kData,
+                smooth: true,
+                itemStyle: {
+                    color: '#5470c6'
+                }
+            },
+            {
+                name: 'D',
+                type: 'line',
+                data: dData,
+                smooth: true,
+                itemStyle: {
+                    color: '#91cc75'
+                }
+            },
+            {
+                name: 'J',
+                type: 'line',
+                data: jData,
+                smooth: true,
+                itemStyle: {
+                    color: '#fac858'
+                }
+            }
+        ],
+        markLine: {
+            data: [
+                { yAxis: 80, lineStyle: { color: '#ef232a', type: 'dashed' } },
+                { yAxis: 20, lineStyle: { color: '#14b143', type: 'dashed' } }
+            ]
+        }
+    };
+    
+    indicatorChart.setOption(option, true);
+    // 强制调整图表尺寸
+    setTimeout(() => {
+        indicatorChart.resize();
+    }, 100);
+}
+
+// 渲染RSI图表
+function renderRSIChart() {
+    // 后端已经返回正序数据，直接使用
+    const dates = factorsData.map(item => item.trade_date);
+    const rsi6Data = factorsData.map(item => item.rsi_6 || 0);
+    const rsi12Data = factorsData.map(item => item.rsi_12 || 0);
+    const rsi24Data = factorsData.map(item => item.rsi_24 || 0);
+    
+    const option = {
+        title: {
+            text: 'RSI Indicator',
+            left: 'left'
+        },
+        tooltip: {
+            trigger: 'axis'
+        },
+        legend: {
+            data: ['RSI6', 'RSI12', 'RSI24'],
+            top: 30
+        },
+        grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '3%',
+            containLabel: true
+        },
+        xAxis: {
+            type: 'category',
+            data: dates
+        },
+        yAxis: {
+            type: 'value',
+            min: 0,
+            max: 100
+        },
+        series: [
+            {
+                name: 'RSI6',
+                type: 'line',
+                data: rsi6Data,
+                smooth: true,
+                itemStyle: {
+                    color: '#5470c6'
+                }
+            },
+            {
+                name: 'RSI12',
+                type: 'line',
+                data: rsi12Data,
+                smooth: true,
+                itemStyle: {
+                    color: '#91cc75'
+                }
+            },
+            {
+                name: 'RSI24',
+                type: 'line',
+                data: rsi24Data,
+                smooth: true,
+                itemStyle: {
+                    color: '#fac858'
+                }
+            }
+        ],
+        markLine: {
+            data: [
+                { yAxis: 70, lineStyle: { color: '#ef232a', type: 'dashed' } },
+                { yAxis: 30, lineStyle: { color: '#14b143', type: 'dashed' } }
+            ]
+        }
+    };
+    
+    indicatorChart.setOption(option, true);
+    // 强制调整图表尺寸
+    setTimeout(() => {
+        indicatorChart.resize();
+    }, 100);
+}
+
+// 渲染布林带图表
+function renderBollChart() {
+    // 后端已经返回正序数据，直接使用
+    const dates = historyData.map(item => item.trade_date);
+    const closeData = historyData.map(item => item.close);
+    
+    // 从技术因子数据中获取布林带数据
+    const bollUpper = [];
+    const bollMid = [];
+    const bollLower = [];
+    
+    dates.forEach(date => {
+        const factor = factorsData.find(f => f.trade_date === date);
+        bollUpper.push(factor ? factor.boll_upper || 0 : 0);
+        bollMid.push(factor ? factor.boll_mid || 0 : 0);
+        bollLower.push(factor ? factor.boll_lower || 0 : 0);
+    });
+    
+    const option = {
+        title: {
+            text: 'Bollinger Bands',
+            left: 'left'
+        },
+        tooltip: {
+            trigger: 'axis'
+        },
+        legend: {
+            data: ['Close', 'Upper', 'Middle', 'Lower'],
+            top: 30
+        },
+        grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '3%',
+            containLabel: true
+        },
+        xAxis: {
+            type: 'category',
+            data: dates
+        },
+        yAxis: {
+            type: 'value'
+        },
+        series: [
+            {
+                name: 'Close',
+                type: 'line',
+                data: closeData,
+                smooth: true,
+                itemStyle: {
+                    color: '#5470c6'
+                },
+                lineStyle: {
+                    width: 2
+                }
+            },
+            {
+                name: 'Upper',
+                type: 'line',
+                data: bollUpper,
+                smooth: true,
+                itemStyle: {
+                    color: '#ef232a'
+                },
+                lineStyle: {
+                    type: 'dashed'
+                }
+            },
+            {
+                name: 'Middle',
+                type: 'line',
+                data: bollMid,
+                smooth: true,
+                itemStyle: {
+                    color: '#fac858'
+                }
+            },
+            {
+                name: 'Lower',
+                type: 'line',
+                data: bollLower,
+                smooth: true,
+                itemStyle: {
+                    color: '#14b143'
+                },
+                lineStyle: {
+                    type: 'dashed'
+                }
+            }
+        ]
+    };
+    
+    indicatorChart.setOption(option, true);
+    // 强制调整图表尺寸
+    setTimeout(() => {
+        indicatorChart.resize();
+    }, 100);
+}
+
+// 切换主图表
+function switchMainChart(type) {
+    currentMainChart = type;
+    document.querySelectorAll('#main-chart-section .btn-group .btn').forEach(btn => btn.classList.remove('active'));
+    event.target.classList.add('active');
+    
+    if (historyData.length > 0) {
+        renderMainChart();
+    }
+}
+
+// 切换指标图表
+function switchIndicatorChart(indicator) {
+    currentIndicator = indicator;
+    
+    // 更新选项卡状态
+    document.querySelectorAll('.chart-tab').forEach(tab => tab.classList.remove('active'));
+    event.target.classList.add('active');
+    
+    // 更新标题
+    const titles = {
+        'macd': '📈 MACD Indicator',
+        'kdj': '📊 KDJ Indicator',
+        'rsi': '📉 RSI Indicator',
+        'boll': '📊 Bollinger Bands'
+    };
+    document.getElementById('indicator-title').textContent = titles[indicator];
+    
+    if (factorsData.length > 0) {
+        renderIndicatorChart();
+    }
+}
+
+// 渲染数据表格
+function renderDataTable(historyData, factorsData) {
+    const tbody = document.getElementById('data-table-body');
+    
+    if (!historyData || historyData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">No data</td></tr>';
+        return;
+    }
+    
+    // 合并历史数据和技术因子数据
+    const mergedData = historyData.slice(0, 20).map(history => {
+        const factor = factorsData.find(f => f.trade_date === history.trade_date) || {};
+        return { ...history, ...factor };
+    });
+    
+    tbody.innerHTML = mergedData.map(item => `
+        <tr>
+            <td>${item.trade_date}</td>
+            <td>${formatNumber(item.open, 2)}</td>
+            <td class="text-danger">${formatNumber(item.high, 2)}</td>
+            <td class="text-success">${formatNumber(item.low, 2)}</td>
+            <td><strong>${formatNumber(item.close, 2)}</strong></td>
+            <td>${formatNumber(item.vol/10000, 1)}K</td>
+            <td class="${(item.pct_chg || 0) >= 0 ? 'text-danger' : 'text-success'}">
+                ${formatPercent(item.pct_chg || 0)}
+            </td>
+            <td>${formatNumber(item.rsi_6, 2)}</td>
+            <td>${formatNumber(item.macd, 4)}</td>
+        </tr>
+    `).join('');
+}
+
+// 添加到自选股
+function addToWatchlist() {
+    if (currentStock) {
+        alert(`Added ${currentStock} to watchlist`);
+    }
+}
+
+// 工具函数
+function formatNumber(num, decimals = 2) {
+    if (num === null || num === undefined || isNaN(num)) return '--';
+    return Number(num).toLocaleString('zh-CN', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+    });
+}
+
+function formatPercent(num) {
+    if (num === null || num === undefined || isNaN(num)) return '--';
+    const sign = num >= 0 ? '+' : '';
+    return sign + Number(num).toFixed(2) + '%';
+}
+</script>
+{% endblock %} 

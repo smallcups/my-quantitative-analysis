@@ -1,0 +1,1268 @@
+{% extends "base.html" %}
+
+{% block title %}{{ ts_code }} - Stock Details - Stock Analysis System{% endblock %}
+
+{% block content %}
+<div class="container">
+    <!-- 股票基本信息 -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">📊 Stock Details</h5>
+                        <span class="badge bg-primary" id="stock-code">{{ ts_code }}</span>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="stock-info" class="row">
+                        <div class="col-12 text-center py-3">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2 text-muted">Loading stock info...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 功能选项卡 -->
+    <div class="row">
+        <div class="col-12">
+            <ul class="nav nav-tabs" id="stockTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="history-tab" data-bs-toggle="tab" data-bs-target="#history" type="button" role="tab">
+                        📈 History
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="factors-tab" data-bs-toggle="tab" data-bs-target="#factors" type="button" role="tab">
+                        🔢 Technical Factors
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="moneyflow-tab" data-bs-toggle="tab" data-bs-target="#moneyflow" type="button" role="tab">
+                        💰 Money Flow
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="cyq-tab" data-bs-toggle="tab" data-bs-target="#cyq" type="button" role="tab">
+                        🎯 Chip Distribution
+                    </button>
+                </li>
+            </ul>
+            
+            <div class="tab-content" id="stockTabsContent">
+                <!-- 历史数据 -->
+                <div class="tab-pane fade show active" id="history" role="tabpanel">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0">Historical Price Data</h6>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <button type="button" class="btn btn-outline-primary" onclick="loadHistoryData(30)">30天</button>
+                                    <button type="button" class="btn btn-outline-primary active" onclick="loadHistoryData(60)">60天</button>
+                                    <button type="button" class="btn btn-outline-primary" onclick="loadHistoryData(120)">120天</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div id="history-content">
+                                <div class="text-center py-4">
+                                    <p class="text-muted">Click button above to load history</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 技术因子 -->
+                <div class="tab-pane fade" id="factors" role="tabpanel">
+                    <div class="card">
+                        <div class="card-header">
+                            <h6 class="mb-0">Technical Factor Data</h6>
+                        </div>
+                        <div class="card-body">
+                            <div id="factors-content">
+                                <div class="text-center py-4">
+                                    <p class="text-muted">Auto-load when switching to this tab</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 资金流向 -->
+                <div class="tab-pane fade" id="moneyflow" role="tabpanel">
+                    <div class="card">
+                        <div class="card-header">
+                            <h6 class="mb-0">Money Flow Data</h6>
+                        </div>
+                        <div class="card-body">
+                            <div id="moneyflow-content">
+                                <div class="text-center py-4">
+                                    <p class="text-muted">Auto-load when switching to this tab</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 筹码分布 -->
+                <div class="tab-pane fade" id="cyq" role="tabpanel">
+                    <div class="card">
+                        <div class="card-header">
+                            <h6 class="mb-0">Chip Distribution Data</h6>
+                        </div>
+                        <div class="card-body">
+                            <div id="cyq-content">
+                                <div class="text-center py-4">
+                                    <p class="text-muted">Auto-load when switching to this tab</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const tsCode = '{{ ts_code }}';
+let stockInfo = null;
+
+// 页面加载完成后初始化
+document.addEventListener('DOMContentLoaded', function() {
+    loadStockInfo();
+    loadHistoryData(60); // 默认加载60天数据
+    
+    // 绑定标签页切换事件
+    document.querySelectorAll('#stockTabs button[data-bs-toggle="tab"]').forEach(tab => {
+        tab.addEventListener('shown.bs.tab', function(event) {
+            const target = event.target.getAttribute('data-bs-target');
+            switch(target) {
+                case '#factors':
+                    loadFactorsData();
+                    break;
+                case '#moneyflow':
+                    loadMoneyflowData();
+                    break;
+                case '#cyq':
+                    loadCyqData();
+                    break;
+            }
+        });
+    });
+});
+
+// 加载股票基本信息
+async function loadStockInfo() {
+    try {
+        const response = await apiRequest(`/stocks/${tsCode}`);
+        if (response.code === 200) {
+            stockInfo = response.data;
+            renderStockInfo(stockInfo);
+        } else {
+            showError('stock-info', 'Failed to load stock info');
+        }
+    } catch (error) {
+        showError('stock-info', '股票信息加载失败');
+        console.error('加载股票信息失败:', error);
+    }
+}
+
+// 渲染股票基本信息
+function renderStockInfo(stock) {
+    const container = document.getElementById('stock-info');
+    
+    const html = `
+        <div class="col-md-8">
+            <h3 class="mb-3">${stock.name} <small class="text-muted">(${stock.symbol})</small></h3>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="d-flex justify-content-between">
+                        <span class="text-muted">Symbol:</span>
+                        <strong>${stock.ts_code}</strong>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="d-flex justify-content-between">
+                        <span class="text-muted">Name:</span>
+                        <strong>${stock.symbol}</strong>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="d-flex justify-content-between">
+                        <span class="text-muted">Industry:</span>
+                        <span class="badge bg-secondary">${stock.industry || '--'}</span>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="d-flex justify-content-between">
+                        <span class="text-muted">Region:</span>
+                        <span class="badge bg-info">${stock.area || '--'}</span>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="d-flex justify-content-between">
+                        <span class="text-muted">List Date:</span>
+                        <strong>${stock.list_date || '--'}</strong>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="d-flex justify-content-between">
+                        <span class="text-muted">Market:</span>
+                        <span class="badge ${stock.ts_code.includes('SH') ? 'bg-danger' : 'bg-success'}">
+                            ${stock.ts_code.includes('SH') ? 'Shanghai' : 'Shenzhen'}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="text-center">
+                <div class="card bg-light">
+                    <div class="card-body">
+                        <h5 class="card-title">Quick Actions</h5>
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-primary btn-sm" onclick="addToWatchlist()">
+                                ⭐ Add to Watchlist
+                            </button>
+                            <button class="btn btn-success btn-sm" onclick="openAnalysis()">
+                                📈 Technical Analysis
+                            </button>
+                            <button class="btn btn-info btn-sm" onclick="openBacktest()">
+                                📊 Backtest
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    container.innerHTML = html;
+}
+
+// 加载历史数据
+async function loadHistoryData(days = 60) {
+    showLoading('history-content');
+    
+    try {
+        const response = await apiRequest(`/stocks/${tsCode}/history?limit=${days}`);
+        if (response.code === 200) {
+            renderHistoryData(response.data, days);
+        } else {
+            showError('history-content', 'Failed to load history');
+        }
+    } catch (error) {
+        showError('history-content', '历史数据加载失败');
+        console.error('加载历史数据失败:', error);
+    }
+}
+
+// 渲染历史数据
+function renderHistoryData(data, days) {
+    const container = document.getElementById('history-content');
+    
+    if (!data || data.length === 0) {
+        container.innerHTML = '<div class="text-center py-4"><p class="text-muted">No historical data</p></div>';
+        return;
+    }
+    
+    const html = `
+        <div class="mb-3">
+            <small class="text-muted">最近 ${days} 天的历史数据，共 ${data.length} 条记录（按时间倒序，最新数据在前）</small>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Open</th>
+                        <th>High</th>
+                        <th>Low</th>
+                        <th>Close</th>
+                        <th>Volume</th>
+                        <th>Amount</th>
+                        <th>Change %</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${data.slice(0, 20).map(item => `
+                        <tr>
+                            <td><strong>${item.trade_date || '--'}</strong></td>
+                            <td>${formatNumber(item.open, 2)}</td>
+                            <td class="text-danger">${formatNumber(item.high, 2)}</td>
+                            <td class="text-success">${formatNumber(item.low, 2)}</td>
+                            <td class="text-primary"><strong>${formatNumber(item.close, 2)}</strong></td>
+                            <td>${formatNumber((item.vol || 0) / 10000, 1)}</td>
+                            <td>${formatNumber((item.amount || 0) / 10000, 0)}</td>
+                            <td class="${(item.pct_chg || 0) >= 0 ? 'text-danger' : 'text-success'}">
+                                <strong>${formatPercent(item.pct_chg || 0)}</strong>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+        ${data.length > 20 ? `<div class="text-center"><small class="text-muted">仅显示前20条记录</small></div>` : ''}
+    `;
+    
+    container.innerHTML = html;
+}
+
+// 加载技术因子数据
+async function loadFactorsData() {
+    if (document.getElementById('factors-content').innerHTML.includes('加载中')) return;
+    
+    showLoading('factors-content');
+    
+    try {
+        const response = await apiRequest(`/stocks/${tsCode}/factors?limit=20`);
+        if (response.code === 200) {
+            renderFactorsData(response.data);
+        } else {
+            showError('factors-content', 'Failed to load factor data');
+        }
+    } catch (error) {
+        showError('factors-content', '技术因子数据加载失败');
+        console.error('加载技术因子数据失败:', error);
+    }
+}
+
+// 渲染技术因子数据
+function renderFactorsData(data) {
+    const container = document.getElementById('factors-content');
+    
+    if (!data || data.length === 0) {
+        container.innerHTML = '<div class="text-center py-4"><p class="text-muted">No factor data</p></div>';
+        return;
+    }
+    
+    const html = `
+        <div class="mb-3">
+            <small class="text-muted">技术因子数据，共 ${data.length} 条记录（按时间倒序，最新数据在前）</small>
+        </div>
+        
+        <!-- 技术指标图表 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0">📊 技术指标趋势</h6>
+                    </div>
+                    <div class="card-body">
+                        <div id="factors-chart" style="height: 400px;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 详细数据表格 -->
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0">📋 详细数据</h6>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover">
+                        <thead>
+                            <tr>
+                                <th>日期</th>
+                                <th>收盘价</th>
+                                <th>MACD DIF</th>
+                                <th>MACD DEA</th>
+                                <th>MACD</th>
+                                <th>KDJ K</th>
+                                <th>KDJ D</th>
+                                <th>KDJ J</th>
+                                <th>RSI(6)</th>
+                                <th>RSI(12)</th>
+                                <th>RSI(24)</th>
+                                <th>布林上轨</th>
+                                <th>布林中轨</th>
+                                <th>布林下轨</th>
+                                <th>CCI</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.slice(0, 20).map(item => `
+                                <tr>
+                                    <td><strong>${item.trade_date || '--'}</strong></td>
+                                    <td class="text-primary"><strong>${formatNumber(item.close, 2)}</strong></td>
+                                    <td class="${(item.macd_dif || 0) >= 0 ? 'text-danger' : 'text-success'}">${formatNumber(item.macd_dif, 4)}</td>
+                                    <td class="${(item.macd_dea || 0) >= 0 ? 'text-danger' : 'text-success'}">${formatNumber(item.macd_dea, 4)}</td>
+                                    <td class="${(item.macd || 0) >= 0 ? 'text-danger' : 'text-success'}">${formatNumber(item.macd, 4)}</td>
+                                    <td>${formatNumber(item.kdj_k, 2)}</td>
+                                    <td>${formatNumber(item.kdj_d, 2)}</td>
+                                    <td class="${(item.kdj_j || 0) > 80 ? 'text-danger' : (item.kdj_j || 0) < 20 ? 'text-success' : ''}">${formatNumber(item.kdj_j, 2)}</td>
+                                    <td class="${(item.rsi_6 || 0) > 70 ? 'text-danger' : (item.rsi_6 || 0) < 30 ? 'text-success' : ''}">${formatNumber(item.rsi_6, 2)}</td>
+                                    <td class="${(item.rsi_12 || 0) > 70 ? 'text-danger' : (item.rsi_12 || 0) < 30 ? 'text-success' : ''}">${formatNumber(item.rsi_12, 2)}</td>
+                                    <td class="${(item.rsi_24 || 0) > 70 ? 'text-danger' : (item.rsi_24 || 0) < 30 ? 'text-success' : ''}">${formatNumber(item.rsi_24, 2)}</td>
+                                    <td class="text-danger">${formatNumber(item.boll_upper, 2)}</td>
+                                    <td class="text-warning">${formatNumber(item.boll_mid, 2)}</td>
+                                    <td class="text-success">${formatNumber(item.boll_lower, 2)}</td>
+                                    <td class="${(item.cci || 0) > 100 ? 'text-danger' : (item.cci || 0) < -100 ? 'text-success' : ''}">${formatNumber(item.cci, 2)}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                ${data.length > 20 ? `<div class="text-center mt-3"><small class="text-muted">仅显示前20条记录</small></div>` : ''}
+            </div>
+        </div>
+    `;
+    
+    container.innerHTML = html;
+    
+    // 渲染技术指标图表
+    renderFactorsChart(data);
+}
+
+// 渲染技术指标图表
+function renderFactorsChart(data) {
+    const factorsChart = echarts.init(document.getElementById('factors-chart'));
+    
+    // 数据需要反转，因为ECharts期望时间正序
+    const reversedData = [...data].reverse();
+    const dates = reversedData.map(item => item.trade_date);
+    
+    const factorsOption = {
+        title: {
+            text: '技术指标趋势',
+            left: 'center'
+        },
+        tooltip: {
+            trigger: 'axis',
+            formatter: function(params) {
+                let result = params[0].name + '<br/>';
+                params.forEach(param => {
+                    result += param.marker + param.seriesName + ': ' + formatNumber(param.value, 4) + '<br/>';
+                });
+                return result;
+            }
+        },
+        legend: {
+            data: ['MACD DIF', 'MACD DEA', 'MACD', 'RSI(6)', 'RSI(12)', 'KDJ K', 'KDJ D'],
+            top: 30,
+            type: 'scroll'
+        },
+        grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '15%',
+            containLabel: true
+        },
+        xAxis: {
+            type: 'category',
+            data: dates,
+            axisLabel: {
+                rotate: 45
+            }
+        },
+        yAxis: [
+            {
+                type: 'value',
+                name: 'MACD',
+                position: 'left',
+                axisLabel: {
+                    formatter: function(value) {
+                        return formatNumber(value, 4);
+                    }
+                }
+            },
+            {
+                type: 'value',
+                name: 'RSI/KDJ',
+                position: 'right',
+                min: 0,
+                max: 100,
+                axisLabel: {
+                    formatter: function(value) {
+                        return value + '';
+                    }
+                }
+            }
+        ],
+        dataZoom: [
+            {
+                type: 'inside',
+                start: 70,
+                end: 100
+            },
+            {
+                show: true,
+                type: 'slider',
+                top: '90%',
+                start: 70,
+                end: 100
+            }
+        ],
+        series: [
+            {
+                name: 'MACD DIF',
+                type: 'line',
+                yAxisIndex: 0,
+                data: reversedData.map(item => item.macd_dif || 0),
+                itemStyle: { color: '#ff4d4f' },
+                lineStyle: { width: 2 }
+            },
+            {
+                name: 'MACD DEA',
+                type: 'line',
+                yAxisIndex: 0,
+                data: reversedData.map(item => item.macd_dea || 0),
+                itemStyle: { color: '#52c41a' },
+                lineStyle: { width: 2 }
+            },
+            {
+                name: 'MACD',
+                type: 'bar',
+                yAxisIndex: 0,
+                data: reversedData.map(item => item.macd || 0),
+                itemStyle: {
+                    color: function(params) {
+                        return params.value >= 0 ? '#ff4d4f' : '#52c41a';
+                    }
+                }
+            },
+            {
+                name: 'RSI(6)',
+                type: 'line',
+                yAxisIndex: 1,
+                data: reversedData.map(item => item.rsi_6 || 0),
+                itemStyle: { color: '#1890ff' }
+            },
+            {
+                name: 'RSI(12)',
+                type: 'line',
+                yAxisIndex: 1,
+                data: reversedData.map(item => item.rsi_12 || 0),
+                itemStyle: { color: '#722ed1' }
+            },
+            {
+                name: 'KDJ K',
+                type: 'line',
+                yAxisIndex: 1,
+                data: reversedData.map(item => item.kdj_k || 0),
+                itemStyle: { color: '#fa8c16' }
+            },
+            {
+                name: 'KDJ D',
+                type: 'line',
+                yAxisIndex: 1,
+                data: reversedData.map(item => item.kdj_d || 0),
+                itemStyle: { color: '#13c2c2' }
+            }
+        ]
+    };
+    
+    factorsChart.setOption(factorsOption);
+    
+    // 响应式调整
+    window.addEventListener('resize', function() {
+        factorsChart.resize();
+    });
+}
+
+// 加载资金流向数据
+async function loadMoneyflowData() {
+    if (document.getElementById('moneyflow-content').innerHTML.includes('加载中')) return;
+    
+    showLoading('moneyflow-content');
+    
+    try {
+        const response = await apiRequest(`/stocks/${tsCode}/moneyflow?limit=20`);
+        if (response.code === 200) {
+            renderMoneyflowData(response.data);
+        } else {
+            showError('moneyflow-content', 'Failed to load money flow data');
+        }
+    } catch (error) {
+        showError('moneyflow-content', '资金流向数据加载失败');
+        console.error('加载资金流向数据失败:', error);
+    }
+}
+
+// 渲染资金流向数据
+function renderMoneyflowData(data) {
+    const container = document.getElementById('moneyflow-content');
+    
+    if (!data || data.length === 0) {
+        container.innerHTML = '<div class="text-center py-4"><p class="text-muted">No money flow data</p></div>';
+        return;
+    }
+    
+    const html = `
+        <div class="mb-3">
+            <small class="text-muted">资金流向数据，共 ${data.length} 条记录</small>
+        </div>
+        
+        <!-- 资金流向图表 -->
+        <div class="row mb-4">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0">📊 分单资金买卖对比</h6>
+                    </div>
+                    <div class="card-body">
+                        <div id="moneyflow-chart" style="height: 400px;"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0">📈 净流入趋势</h6>
+                    </div>
+                    <div class="card-body">
+                        <div id="netflow-chart" style="height: 400px;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 资金形态指标 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0">💰 资金形态指标</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row" id="money-indicators">
+                            <!-- 动态生成指标卡片 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 详细数据表格 -->
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0">📋 详细数据</h6>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover">
+                        <thead>
+                            <tr>
+                                <th>日期</th>
+                                <th>净流入额</th>
+                                <th>特大单买入</th>
+                                <th>特大单卖出</th>
+                                <th>大单买入</th>
+                                <th>大单卖出</th>
+                                <th>中单买入</th>
+                                <th>中单卖出</th>
+                                <th>小单买入</th>
+                                <th>小单卖出</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.slice(0, 10).map(item => `
+                                <tr>
+                                    <td>${item.trade_date || '--'}</td>
+                                    <td class="${(item.net_mf_amount || 0) >= 0 ? 'text-danger' : 'text-success'}">
+                                        <strong>${formatNumber(item.net_mf_amount, 0)}</strong>
+                                    </td>
+                                    <td class="text-danger">${formatNumber(item.buy_elg_amount, 0)}</td>
+                                    <td class="text-success">${formatNumber(item.sell_elg_amount, 0)}</td>
+                                    <td class="text-danger">${formatNumber(item.buy_lg_amount, 0)}</td>
+                                    <td class="text-success">${formatNumber(item.sell_lg_amount, 0)}</td>
+                                    <td class="text-danger">${formatNumber(item.buy_md_amount, 0)}</td>
+                                    <td class="text-success">${formatNumber(item.sell_md_amount, 0)}</td>
+                                    <td class="text-danger">${formatNumber(item.buy_sm_amount, 0)}</td>
+                                    <td class="text-success">${formatNumber(item.sell_sm_amount, 0)}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    container.innerHTML = html;
+    
+    // 渲染图表
+    renderMoneyflowCharts(data);
+}
+
+// 渲染资金流向图表
+function renderMoneyflowCharts(data) {
+    // 分单资金买卖对比图
+    const moneyflowChart = echarts.init(document.getElementById('moneyflow-chart'));
+    
+    const dates = data.map(item => item.trade_date).reverse();
+    const latestData = data[0]; // 最新一天的数据
+    
+    // 分单买卖对比（最新一天）
+    const moneyflowOption = {
+        title: {
+            text: '分单资金买卖对比',
+            subtext: `${latestData.trade_date}`,
+            left: 'center'
+        },
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: {
+                type: 'shadow'
+            },
+            formatter: function(params) {
+                let result = params[0].name + '<br/>';
+                params.forEach(param => {
+                    const value = Math.abs(param.value);
+                    result += param.marker + param.seriesName + ': ' + formatNumber(value, 0) + '万<br/>';
+                });
+                return result;
+            }
+        },
+        legend: {
+            data: ['买入', '卖出'],
+            top: 30
+        },
+        grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '3%',
+            containLabel: true
+        },
+        xAxis: {
+            type: 'category',
+            data: ['特大单', '大单', '中单', '小单']
+        },
+        yAxis: {
+            type: 'value',
+            axisLabel: {
+                formatter: function(value) {
+                    return formatNumber(Math.abs(value), 0) + '万';
+                }
+            }
+        },
+        series: [
+            {
+                name: '买入',
+                type: 'bar',
+                data: [
+                    latestData.buy_elg_amount || 0,
+                    latestData.buy_lg_amount || 0,
+                    latestData.buy_md_amount || 0,
+                    latestData.buy_sm_amount || 0
+                ],
+                itemStyle: {
+                    color: '#ff4d4f'
+                }
+            },
+            {
+                name: '卖出',
+                type: 'bar',
+                data: [
+                    -(latestData.sell_elg_amount || 0),
+                    -(latestData.sell_lg_amount || 0),
+                    -(latestData.sell_md_amount || 0),
+                    -(latestData.sell_sm_amount || 0)
+                ],
+                itemStyle: {
+                    color: '#52c41a'
+                }
+            }
+        ]
+    };
+    
+    moneyflowChart.setOption(moneyflowOption);
+    
+    // 净流入趋势图
+    const netflowChart = echarts.init(document.getElementById('netflow-chart'));
+    
+    const netflowOption = {
+        title: {
+            text: '净流入趋势',
+            left: 'center'
+        },
+        tooltip: {
+            trigger: 'axis',
+            formatter: function(params) {
+                const data = params[0];
+                return `${data.name}<br/>净流入: ${formatNumber(data.value, 0)}万`;
+            }
+        },
+        grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '15%',
+            containLabel: true
+        },
+        xAxis: {
+            type: 'category',
+            data: dates,
+            axisLabel: {
+                rotate: 45
+            }
+        },
+        yAxis: {
+            type: 'value',
+            axisLabel: {
+                formatter: function(value) {
+                    return formatNumber(value, 0) + '万';
+                }
+            }
+        },
+        series: [{
+            name: '净流入',
+            type: 'line',
+            data: data.map(item => item.net_mf_amount || 0).reverse(),
+            itemStyle: {
+                color: '#1890ff'
+            },
+            areaStyle: {
+                color: {
+                    type: 'linear',
+                    x: 0,
+                    y: 0,
+                    x2: 0,
+                    y2: 1,
+                    colorStops: [{
+                        offset: 0, color: 'rgba(24, 144, 255, 0.3)'
+                    }, {
+                        offset: 1, color: 'rgba(24, 144, 255, 0.1)'
+                    }]
+                }
+            }
+        }]
+    };
+    
+    netflowChart.setOption(netflowOption);
+    
+    // 渲染资金形态指标
+    renderMoneyIndicators(latestData);
+    
+    // 响应式调整
+    window.addEventListener('resize', function() {
+        moneyflowChart.resize();
+        netflowChart.resize();
+    });
+}
+
+// 渲染资金形态指标
+function renderMoneyIndicators(data) {
+    const container = document.getElementById('money-indicators');
+    
+    // 计算各种指标
+    const totalBuy = (data.buy_elg_amount || 0) + (data.buy_lg_amount || 0) + (data.buy_md_amount || 0) + (data.buy_sm_amount || 0);
+    const totalSell = (data.sell_elg_amount || 0) + (data.sell_lg_amount || 0) + (data.sell_md_amount || 0) + (data.sell_sm_amount || 0);
+    const mainBuy = (data.buy_elg_amount || 0) + (data.buy_lg_amount || 0); // 主力买入（特大单+大单）
+    const mainSell = (data.sell_elg_amount || 0) + (data.sell_lg_amount || 0); // 主力卖出
+    
+    const lgBuyRate = totalBuy > 0 ? ((data.buy_lg_amount || 0) / totalBuy * 100) : 0;
+    const elgBuyRate = totalBuy > 0 ? ((data.buy_elg_amount || 0) / totalBuy * 100) : 0;
+    const mainNetFlow = mainBuy - mainSell;
+    
+    const html = `
+        <div class="col-md-3">
+            <div class="text-center p-3 bg-light rounded">
+                <h5 class="text-primary">${formatNumber(data.net_mf_amount || 0, 0)}</h5>
+                <small class="text-muted">净流入额(万)</small>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="text-center p-3 bg-light rounded">
+                <h5 class="text-success">${formatNumber(lgBuyRate, 1)}%</h5>
+                <small class="text-muted">大单买入占比</small>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="text-center p-3 bg-light rounded">
+                <h5 class="text-warning">${formatNumber(elgBuyRate, 1)}%</h5>
+                <small class="text-muted">特大单买入占比</small>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="text-center p-3 bg-light rounded">
+                <h5 class="${mainNetFlow >= 0 ? 'text-danger' : 'text-success'}">${formatNumber(mainNetFlow, 0)}</h5>
+                <small class="text-muted">主力净流入(万)</small>
+            </div>
+        </div>
+    `;
+    
+    container.innerHTML = html;
+}
+
+// 加载筹码分布数据
+async function loadCyqData() {
+    if (document.getElementById('cyq-content').innerHTML.includes('加载中')) return;
+    
+    showLoading('cyq-content');
+    
+    try {
+        const response = await apiRequest(`/stocks/${tsCode}/cyq?limit=20`);
+        if (response.code === 200) {
+            renderCyqData(response.data);
+        } else {
+            showError('cyq-content', 'Failed to load chip distribution data');
+        }
+    } catch (error) {
+        showError('cyq-content', '筹码分布数据加载失败');
+        console.error('加载筹码分布数据失败:', error);
+    }
+}
+
+// 渲染筹码分布数据
+function renderCyqData(data) {
+    const container = document.getElementById('cyq-content');
+    
+    if (!data || data.length === 0) {
+        container.innerHTML = '<div class="text-center py-4"><p class="text-muted">No chip distribution data</p></div>';
+        return;
+    }
+    
+    const html = `
+        <div class="mb-3">
+            <small class="text-muted">筹码分布数据，共 ${data.length} 条记录</small>
+        </div>
+        
+        <!-- 筹码分布图表 -->
+        <div class="row mb-4">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0">📊 成本分位曲线</h6>
+                    </div>
+                    <div class="card-body">
+                        <div id="cost-distribution-chart" style="height: 400px;"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0">📈 胜率变化</h6>
+                    </div>
+                    <div class="card-body">
+                        <div id="winner-rate-chart" style="height: 400px;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 筹码分析指标 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0">🎯 筹码分析指标</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row" id="cyq-indicators">
+                            <!-- 动态生成指标卡片 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 详细数据表格 -->
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0">📋 详细数据</h6>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover">
+                        <thead>
+                            <tr>
+                                <th>日期</th>
+                                <th>历史最低</th>
+                                <th>历史最高</th>
+                                <th>5%成本</th>
+                                <th>15%成本</th>
+                                <th>50%成本</th>
+                                <th>85%成本</th>
+                                <th>95%成本</th>
+                                <th>加权平均</th>
+                                <th>胜率</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.slice(0, 10).map(item => `
+                                <tr>
+                                    <td>${item.trade_date || '--'}</td>
+                                    <td class="text-success">${formatNumber(item.his_low, 2)}</td>
+                                    <td class="text-danger">${formatNumber(item.his_high, 2)}</td>
+                                    <td>${formatNumber(item.cost_5pct, 2)}</td>
+                                    <td>${formatNumber(item.cost_15pct, 2)}</td>
+                                    <td><strong>${formatNumber(item.cost_50pct, 2)}</strong></td>
+                                    <td>${formatNumber(item.cost_85pct, 2)}</td>
+                                    <td>${formatNumber(item.cost_95pct, 2)}</td>
+                                    <td class="text-primary"><strong>${formatNumber(item.weight_avg, 2)}</strong></td>
+                                    <td class="${(item.winner_rate || 0) >= 50 ? 'text-success' : 'text-danger'}">
+                                        <strong>${formatPercent(item.winner_rate || 0)}</strong>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    container.innerHTML = html;
+    
+    // 渲染图表
+    renderCyqCharts(data);
+}
+
+// 渲染筹码分布图表
+function renderCyqCharts(data) {
+    // 成本分位曲线图
+    const costChart = echarts.init(document.getElementById('cost-distribution-chart'));
+    
+    const dates = data.map(item => item.trade_date).reverse();
+    
+    const costOption = {
+        title: {
+            text: '成本分位曲线',
+            left: 'center'
+        },
+        tooltip: {
+            trigger: 'axis',
+            formatter: function(params) {
+                let result = params[0].name + '<br/>';
+                params.forEach(param => {
+                    result += param.marker + param.seriesName + ': ' + formatNumber(param.value, 2) + '<br/>';
+                });
+                return result;
+            }
+        },
+        legend: {
+            data: ['5%成本', '15%成本', '50%成本', '85%成本', '95%成本', '加权平均'],
+            top: 30
+        },
+        grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '15%',
+            containLabel: true
+        },
+        xAxis: {
+            type: 'category',
+            data: dates,
+            axisLabel: {
+                rotate: 45
+            }
+        },
+        yAxis: {
+            type: 'value',
+            axisLabel: {
+                formatter: function(value) {
+                    return formatNumber(value, 2);
+                }
+            }
+        },
+        series: [
+            {
+                name: '5%成本',
+                type: 'line',
+                data: data.map(item => item.cost_5pct || 0).reverse(),
+                itemStyle: { color: '#ff7875' }
+            },
+            {
+                name: '15%成本',
+                type: 'line',
+                data: data.map(item => item.cost_15pct || 0).reverse(),
+                itemStyle: { color: '#ffa940' }
+            },
+            {
+                name: '50%成本',
+                type: 'line',
+                data: data.map(item => item.cost_50pct || 0).reverse(),
+                itemStyle: { color: '#1890ff' },
+                lineStyle: { width: 3 }
+            },
+            {
+                name: '85%成本',
+                type: 'line',
+                data: data.map(item => item.cost_85pct || 0).reverse(),
+                itemStyle: { color: '#73d13d' }
+            },
+            {
+                name: '95%成本',
+                type: 'line',
+                data: data.map(item => item.cost_95pct || 0).reverse(),
+                itemStyle: { color: '#b37feb' }
+            },
+            {
+                name: '加权平均',
+                type: 'line',
+                data: data.map(item => item.weight_avg || 0).reverse(),
+                itemStyle: { color: '#f759ab' },
+                lineStyle: { width: 2, type: 'dashed' }
+            }
+        ]
+    };
+    
+    costChart.setOption(costOption);
+    
+    // 胜率变化图
+    const winnerChart = echarts.init(document.getElementById('winner-rate-chart'));
+    
+    const winnerOption = {
+        title: {
+            text: '胜率变化',
+            left: 'center'
+        },
+        tooltip: {
+            trigger: 'axis',
+            formatter: function(params) {
+                const data = params[0];
+                return `${data.name}<br/>胜率: ${formatPercent(data.value)}`;
+            }
+        },
+        grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '15%',
+            containLabel: true
+        },
+        xAxis: {
+            type: 'category',
+            data: dates,
+            axisLabel: {
+                rotate: 45
+            }
+        },
+        yAxis: {
+            type: 'value',
+            min: 0,
+            max: 100,
+            axisLabel: {
+                formatter: function(value) {
+                    return value + '%';
+                }
+            }
+        },
+        series: [{
+            name: '胜率',
+            type: 'line',
+            data: data.map(item => item.winner_rate || 0).reverse(),
+            itemStyle: {
+                color: '#52c41a'
+            },
+            areaStyle: {
+                color: {
+                    type: 'linear',
+                    x: 0,
+                    y: 0,
+                    x2: 0,
+                    y2: 1,
+                    colorStops: [{
+                        offset: 0, color: 'rgba(82, 196, 26, 0.3)'
+                    }, {
+                        offset: 1, color: 'rgba(82, 196, 26, 0.1)'
+                    }]
+                }
+            },
+            markLine: {
+                data: [
+                    { yAxis: 50, name: '50%基准线' }
+                ],
+                lineStyle: {
+                    color: '#ff4d4f',
+                    type: 'dashed'
+                }
+            }
+        }]
+    };
+    
+    winnerChart.setOption(winnerOption);
+    
+    // 渲染筹码分析指标
+    renderCyqIndicators(data[0]); // 最新数据
+    
+    // 响应式调整
+    window.addEventListener('resize', function() {
+        costChart.resize();
+        winnerChart.resize();
+    });
+}
+
+// 渲染筹码分析指标
+function renderCyqIndicators(data) {
+    const container = document.getElementById('cyq-indicators');
+    
+    // 计算筹码集中度（95%成本 - 5%成本）/ 50%成本
+    const concentration = data.cost_95pct && data.cost_5pct && data.cost_50pct ? 
+        ((data.cost_95pct - data.cost_5pct) / data.cost_50pct * 100) : 0;
+    
+    // 计算当前价格相对位置（需要从股票基本信息获取当前价格）
+    const currentPrice = stockInfo?.latest_daily?.close || 0;
+    const pricePosition = data.cost_95pct && data.cost_5pct ? 
+        ((currentPrice - data.cost_5pct) / (data.cost_95pct - data.cost_5pct) * 100) : 0;
+    
+    const html = `
+        <div class="col-md-3">
+            <div class="text-center p-3 bg-light rounded">
+                <h5 class="text-primary">${formatNumber(concentration, 1)}%</h5>
+                <small class="text-muted">筹码集中度</small>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="text-center p-3 bg-light rounded">
+                <h5 class="text-success">${formatNumber(data.weight_avg || 0, 2)}</h5>
+                <small class="text-muted">加权平均成本</small>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="text-center p-3 bg-light rounded">
+                <h5 class="${(data.winner_rate || 0) >= 50 ? 'text-success' : 'text-danger'}">${formatPercent(data.winner_rate || 0)}</h5>
+                <small class="text-muted">当前胜率</small>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="text-center p-3 bg-light rounded">
+                <h5 class="text-warning">${formatNumber(pricePosition, 1)}%</h5>
+                <small class="text-muted">价格相对位置</small>
+            </div>
+        </div>
+    `;
+    
+    container.innerHTML = html;
+}
+
+// 快速操作函数
+function addToWatchlist() {
+    alert(`Added ${stockInfo?.name || tsCode} to watchlist`);
+}
+
+function openAnalysis() {
+    window.open(`/analysis?stock=${tsCode}`, '_blank');
+}
+
+function openBacktest() {
+    window.open(`/backtest?stock=${tsCode}`, '_blank');
+}
+
+// 工具函数
+function formatNumber(num, decimals = 2) {
+    if (num === null || num === undefined || isNaN(num)) return '--';
+    return Number(num).toLocaleString('zh-CN', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+    });
+}
+
+function formatPercent(num) {
+    if (num === null || num === undefined || isNaN(num)) return '--';
+    const sign = num >= 0 ? '+' : '';
+    return sign + Number(num).toFixed(2) + '%';
+}
+</script>
+{% endblock %} 
