@@ -9,6 +9,7 @@ from app.services.ml_models import MLModelManager
 from app.services.stock_scoring import StockScoringEngine
 from app.services.portfolio_optimizer import PortfolioOptimizer
 from app.services.backtest_engine import BacktestEngine
+from app.services.factor_optimizer import FactorOptimizer
 
 # 创建蓝图
 ml_factor_bp = Blueprint('ml_factor', __name__, url_prefix='/api/ml-factor')
@@ -19,6 +20,7 @@ ml_manager = None
 scoring_engine = None
 portfolio_optimizer = None
 backtest_engine = None
+factor_optimizer = None
 
 # JSON序列化辅助函数
 def convert_numpy_types(obj):
@@ -70,6 +72,13 @@ def get_backtest_engine():
     if backtest_engine is None:
         backtest_engine = BacktestEngine()
     return backtest_engine
+
+def get_factor_optimizer():
+    """获取因子优化引擎实例（延迟初始化）"""
+    global factor_optimizer
+    if factor_optimizer is None:
+        factor_optimizer = FactorOptimizer()
+    return factor_optimizer
 
 
 @ml_factor_bp.route('/factors/calculate', methods=['POST'])
@@ -204,6 +213,158 @@ def get_factor_list():
         
     except Exception as e:
         logger.error(f"获取因子列表失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@ml_factor_bp.route('/factors/optimize', methods=['POST'])
+def run_factor_optimization():
+    """运行因子优化分析（IC分析 + 筛选 + 权重计算）"""
+    try:
+        data = request.get_json() or {}
+
+        start_date = data.get('start_date')
+        end_date = data.get('end_date')
+        forward_periods = data.get('forward_periods')
+        ic_ir_threshold = data.get('ic_ir_threshold', 0.3)
+        max_correlation = data.get('max_correlation', 0.7)
+        min_factors = data.get('min_factors', 3)
+        max_factors = data.get('max_factors', 10)
+        weight_method = data.get('weight_method', 'ic_ir_weighted')
+
+        if not start_date:
+            end_dt = datetime.utcnow()
+            start_dt = end_dt - timedelta(days=252)
+            start_date = start_dt.strftime('%Y-%m-%d')
+        if not end_date:
+            end_date = datetime.utcnow().strftime('%Y-%m-%d')
+
+        optimizer = get_factor_optimizer()
+
+        # 运行全量因子分析
+        analysis_result = optimizer.analyze_all_factors(start_date, end_date, forward_periods)
+
+        # 获取最优权重（用5日周期作为默认）
+        default_period = 5
+        if forward_periods and len(forward_periods) == 1:
+            default_period = forward_periods[0]
+
+        weight_result = optimizer.get_optimized_weights(
+            evaluation_date=end_date,
+            forward_period=default_period,
+            method=weight_method,
+            ic_ir_threshold=ic_ir_threshold,
+            max_correlation=max_correlation,
+            min_factors=min_factors,
+            max_factors=max_factors
+        )
+
+        return jsonify({
+            'success': True,
+            'start_date': start_date,
+            'end_date': end_date,
+            'period_analysis': analysis_result.get('results', {}),
+            'best_weights': weight_result
+        })
+
+    except Exception as e:
+        logger.error(f'因子优化失败: {e}')
+        return jsonify({'error': str(e)}), 500
+
+
+@ml_factor_bp.route('/factors/effectiveness', methods=['GET'])
+def get_factor_effectiveness():
+    """查询因子有效性报告（已持久化的IC分析数据）"""
+    try:
+        factor_id = request.args.get('factor_id')
+        forward_period = request.args.get('forward_period')
+        limit = request.args.get('limit', 100, type=int)
+
+        if forward_period:
+            forward_period = int(forward_period)
+
+        records = get_factor_optimizer().get_effectiveness_report(
+            factor_id=factor_id,
+            forward_period=forward_period,
+            limit=limit
+        )
+
+        return jsonify({
+            'success': True,
+            'factors': records,
+            'total_count': len(records)
+        })
+
+    except Exception as e:
+        logger.error(f'获取因子有效性报告失败: {e}')
+        return jsonify({'error': str(e)}), 500
+
+
+@ml_factor_bp.route('/factors/auto-weight', methods=['POST'])
+def get_auto_weights():
+    """自动计算最优因子权重
+
+    Request body (全部可选，有默认值):
+    {
+        // === 时间窗口 ===
+        "evaluation_date": "2025-04-01",   # 截止日期（默认今天）
+        "start_date": "2025-01-01",         # 起算日期（默认 evaluation_date 往前推252天）
+
+        // === 分析参数 ===
+        "forward_period": 5,                # 持有期(天)：因子预测未来N日的收益率
+        "weight_method": "ic_ir_weighted",  # 权重方法：ic_ir_weighted / ic_mean_weighted / equal_weight
+
+        // === 筛选门槛 ===
+        "ic_ir_threshold": 0.3,             # |IC_IR| 最低值，低于此的因子被淘汰
+        "max_correlation": 0.7,             # 因子间最大相关系数，超过的视为冗余，保留IC_IR更高的
+        "min_factors": 3,                   # 最少保留几个因子
+        "max_factors": 10                   # 最多保留几个因子
+    }
+    """
+    try:
+        data = request.get_json() or {}
+
+        evaluation_date = data.get('evaluation_date')
+        if not evaluation_date:
+            evaluation_date = datetime.utcnow().strftime('%Y-%m-%d')
+
+        start_date = data.get('start_date')
+        forward_period = data.get('forward_period', 5)
+        weight_method = data.get('weight_method', 'ic_ir_weighted')
+        ic_ir_threshold = data.get('ic_ir_threshold', 0.3)
+        max_correlation = data.get('max_correlation', 0.7)
+        min_factors = data.get('min_factors', 3)
+        max_factors = data.get('max_factors', 10)
+
+        result = get_factor_optimizer().get_optimized_weights(
+            evaluation_date=evaluation_date,
+            start_date=start_date,
+            forward_period=forward_period,
+            method=weight_method,
+            ic_ir_threshold=ic_ir_threshold,
+            max_correlation=max_correlation,
+            min_factors=min_factors,
+            max_factors=max_factors
+        )
+
+        if 'error' in result:
+            return jsonify({
+                'success': False,
+                'error': result['error']
+            }), 404
+
+        return jsonify({
+            'success': True,
+            'weights': result.get('weights', {}),
+            'selected_factors': result.get('selected_factors', {}),
+            'selection_metadata': result.get('selection_metadata', {}),
+            'evaluation_date': result.get('evaluation_date'),
+            'start_date': result.get('start_date'),
+            'forward_period': result.get('forward_period'),
+            'weight_method': result.get('weight_method')
+        })
+
+    except Exception as e:
+        logger.error(f'获取自动权重失败: {e}')
         return jsonify({'error': str(e)}), 500
 
 

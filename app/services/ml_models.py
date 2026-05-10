@@ -413,6 +413,15 @@ class MLModelManager:
             if hasattr(model, 'feature_importances_'):
                 feature_importance = dict(zip(feature_names, model.feature_importances_))
                 metrics['feature_importance'] = feature_importance
+
+                # 持久化到数据库
+                try:
+                    model_def.feature_importance = feature_importance
+                    db.session.commit()
+                    logger.info(f'Persisted feature importance for model {model_id}')
+                except Exception as persist_err:
+                    db.session.rollback()
+                    logger.warning(f'Failed to persist feature importance: {persist_err}')
             
             # 交叉验证
             if model_def.training_config.get('validation_method') == 'time_series_split':

@@ -78,8 +78,8 @@ logs/
 .ipynb_checkpoints
 
 # Models and data
-models/
-data/
+/models/
+/data/
 *.pkl
 *.joblib
 *.h5

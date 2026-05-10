@@ -10,7 +10,7 @@ class DatabaseUtils:
     _charset = 'utf8mb4'
 
     # Tushare API token
-    _tushare_token = '93aaf3f9c716f82074471a745442831bf8c415ab234136dcfe6d7bbc'  # 替换为你的Tushare API token
+    _tushare_token = '855c47d0b83872b7b31bc31e6b4dec6c77fbcebcda4257af6c191253'
 
     @classmethod
     def init_tushare_api(cls):

@@ -34,13 +34,13 @@
                             <div class="col-md-3">
                                 <div class="mb-3">
                                     <label for="startDate" class="form-label">Start Date</label>
-                                    <input type="date" class="form-control" id="startDate" value="2023-01-01">
+                                    <input type="date" class="form-control" id="startDate" value="2025-01-03">
                                 </div>
                             </div>
                             <div class="col-md-3">
                                 <div class="mb-3">
                                     <label for="endDate" class="form-label">End Date</label>
-                                    <input type="date" class="form-control" id="endDate" value="2024-05-28">
+                                    <input type="date" class="form-control" id="endDate" value="2026-02-12">
                                 </div>
                             </div>
                             <div class="col-md-3">
@@ -137,6 +137,21 @@
                         </div>
                     </div>
                     <div class="mb-3">
+                        <label for="scoringMethod" class="form-label">评分方法</label>
+                        <select class="form-select form-select-sm" id="scoringMethod" onchange="onScoringMethodChange()">
+                            <option value="rank_ic" selected>自动 IC 权重（推荐）</option>
+                            <option value="equal_weight">等权重</option>
+                            <option value="factor_weight">手动权重</option>
+                        </select>
+                    </div>
+                    <div id="autoWeightPreview" class="mb-3">
+                        <button type="button" class="btn btn-sm btn-outline-primary w-100" id="calcWeightBtn" onclick="calcAutoWeights()">
+                            <i class="fas fa-calculator me-1"></i>计算最优权重
+                        </button>
+                        <div id="weightPreview" class="mt-2" style="display:none;"></div>
+                        <div id="weightPreviewNote" class="mt-1" style="display:none;"></div>
+                    </div>
+                    <div id="manualWeightSection" class="mb-3" style="display:none">
                         <label for="factorWeight" class="form-label">Factor Weight</label>
                         <input type="range" class="form-range" id="factorWeight" min="0" max="100" value="30">
                         <div class="d-flex justify-content-between">
@@ -158,6 +173,7 @@
                     <h5 class="mb-0">📈 Backtest Results</h5>
                 </div>
                 <div class="card-body">
+                    <div id="weightInfoLabel" class="alert alert-info py-2 px-3 mb-3 small" style="display:none"></div>
                     <!-- 关键指标 -->
                     <div class="row mb-4">
                         <div class="col-md-2">
@@ -438,23 +454,97 @@ function getFactorTypeLabel(type) {
     return labels[type] || '🔧 Other Factors';
 }
 
+// 评分方法切换
+function onScoringMethodChange() {
+    const method = document.getElementById('scoringMethod').value;
+    document.getElementById('manualWeightSection').style.display = (method === 'factor_weight') ? 'block' : 'none';
+    document.getElementById('autoWeightPreview').style.display = (method === 'rank_ic') ? 'block' : 'none';
+}
+
+// 计算最优权重
+let cachedWeights = {};
+async function calcAutoWeights() {
+    const btn = document.getElementById('calcWeightBtn');
+    const preview = document.getElementById('weightPreview');
+    const note = document.getElementById('weightPreviewNote');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>分析中...';
+
+    const endDate = document.getElementById('endDate').value || new Date().toISOString().slice(0,10);
+    const startDate = document.getElementById('startDate').value || null;
+    const forwardPeriod = parseInt(document.getElementById('forwardPeriod')?.value || '5');
+
+    try {
+        const resp = await axios.post('/api/ml-factor/factors/auto-weight', {
+            evaluation_date: endDate,
+            start_date: startDate,
+            forward_period: forwardPeriod,
+            ic_ir_threshold: 0.1,
+            max_correlation: 0.7,
+            min_factors: 2,
+            max_factors: 8
+        });
+
+        if (!resp.data.success) {
+            preview.innerHTML = '<span class="text-danger">分析失败: ' + (resp.data.error || 'unknown') + '</span>';
+            note.style.display = 'none';
+            return;
+        }
+
+        cachedWeights = resp.data.weights || {};
+        const selected = resp.data.selected_factors || {};
+
+        let html = '';
+        const maxW = Math.max(...Object.values(cachedWeights), 0.01);
+        for (const [fid, w] of Object.entries(cachedWeights)) {
+            const pct = (w * 100).toFixed(1);
+            const barW = (w / maxW * 100).toFixed(0);
+            html += `<div class="d-flex align-items-center mb-1" style="font-size:0.85rem">
+              <code style="min-width:120px">${fid}</code>
+              <div class="flex-grow-1 mx-2"><div style="height:12px;background:linear-gradient(90deg,#198754,#0dcaf0);width:${barW}%;border-radius:3px"></div></div>
+              <strong style="min-width:45px;text-align:right">${pct}%</strong></div>`;
+        }
+        html += `<div class="small text-muted mt-1">选中 ${Object.keys(cachedWeights).length} 个因子 | 权重和=1.0</div>`;
+        preview.innerHTML = html;
+        preview.style.display = 'block';
+        note.innerHTML = `<i class="fas fa-info-circle me-1"></i>基于 ${resp.data.start_date || 'N/A'}~${resp.data.evaluation_date || 'N/A'} 的滚动IC统计`;
+        note.style.display = 'block';
+
+        // 自动勾选对应的因子复选框
+        const weightKeys = Object.keys(cachedWeights);
+        const checkboxes = document.querySelectorAll('#factorSelection input[type="checkbox"]');
+        checkboxes.forEach(cb => { cb.checked = weightKeys.includes(cb.value); });
+
+    } catch (err) {
+        preview.innerHTML = '<span class="text-danger">请求失败: ' + (err.response?.data?.error || err.message) + '</span>';
+        preview.style.display = 'block';
+        note.style.display = 'none';
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-calculator me-1"></i>计算最优权重';
+    }
+}
+
 // 开始回测
 async function startBacktest() {
     const config = getBacktestConfig();
-    
+
     if (!validateConfig(config)) {
         return;
     }
-    
-    showAlert('Running backtest, please wait...', 'info');
-    
+
+    // 显示持续加载提示
+    const loadingId = showLoadingOverlay('Running backtest, please wait...');
+
     try {
+        const scoringMethod = document.getElementById('scoringMethod').value;
         // 构造策略配置
         const strategyConfig = {
             selection_method: config.model_id ? 'ml_based' : 'factor_based',
             model_ids: config.model_id ? [config.model_id] : [],
             factor_list: config.selected_factors,
-            factor_weights: {},  // 简化处理，使用等权重
+            scoring_method: scoringMethod,
+            factor_weights: scoringMethod === 'factor_weight' ? {} : {},
             model_weight: config.model_weight,
             factor_weight: config.factor_weight,
             top_n: config.stock_count,
@@ -467,15 +557,16 @@ async function startBacktest() {
             },
             transaction_cost: config.commission_rate + config.slippage_rate
         };
-        
-        // 为选择的因子设置等权重
-        if (config.selected_factors.length > 0) {
-            const weight = 1.0 / config.selected_factors.length;
+
+        // 手动权重模式：使用用户输入的factorWeight
+        if (scoringMethod === 'factor_weight' && config.selected_factors.length > 0) {
+            const w = 1.0 / config.selected_factors.length;
             config.selected_factors.forEach(factor => {
-                strategyConfig.factor_weights[factor] = weight;
+                strategyConfig.factor_weights[factor] = w;
             });
         }
-        
+        // rank_ic / equal_weight: 不设置 weights，让后端自动处理
+
         const requestData = {
             strategy_config: strategyConfig,
             start_date: config.start_date,
@@ -483,17 +574,21 @@ async function startBacktest() {
             initial_capital: config.initial_capital,
             rebalance_frequency: config.rebalance_freq
         };
-        
+
         const response = await axios.post('/api/ml-factor/backtest/run', requestData);
-        
+
+        // 移除加载提示
+        hideLoadingOverlay(loadingId);
+
         if (response.data.success) {
             backtestData = response.data;
             displayBacktestResults(backtestData);
-            showAlert('Backtest completed', 'success');
+            showAlert('Backtest completed', 'success', 3000);
         } else {
-            showAlert('Backtest failed: ' + (response.data.error || response.data.message), 'danger');
+            showAlert('Backtest failed: ' + (response.data.error || response.data.message), 'danger', 0);
         }
     } catch (error) {
+        hideLoadingOverlay(loadingId);
         console.error('回测失败:', error);
         let errorMessage = 'Backtest failed';
         if (error.response && error.response.data && error.response.data.error) {
@@ -501,10 +596,10 @@ async function startBacktest() {
         } else if (error.message) {
             errorMessage += ': ' + error.message;
         }
-        showAlert(errorMessage, 'danger');
-        
+        showAlert(errorMessage, 'danger', 0);
+
         // 使用模拟数据进行演示
-        showAlert('Using mock data for demonstration', 'info');
+        showAlert('Using mock data for demonstration', 'info', 3000);
         displayMockResults();
     }
 }
@@ -573,7 +668,21 @@ function displayBacktestResults(data) {
     document.getElementById('sharpeRatio').textContent = (performanceMetrics.sharpe_ratio || 0).toFixed(2);
     document.getElementById('volatility').textContent = ((performanceMetrics.volatility || 0) * 100).toFixed(2) + '%';
     document.getElementById('winRate').textContent = ((performanceMetrics.win_rate || 0) * 100).toFixed(1) + '%';
-    
+
+    // 标注权重信息
+    const scoringMethod = document.getElementById('scoringMethod').value;
+    let weightInfo = '';
+    if (scoringMethod === 'rank_ic' && Object.keys(cachedWeights).length > 0) {
+        const parts = Object.entries(cachedWeights).map(([k,v]) => `${k}(${(v*100).toFixed(0)}%)`);
+        weightInfo = `自动IC权重: ${parts.join(', ')}`;
+    } else if (scoringMethod === 'equal_weight') {
+        weightInfo = '等权重';
+    } else if (scoringMethod === 'factor_weight') {
+        weightInfo = '手动权重';
+    }
+    document.getElementById('weightInfoLabel').textContent = weightInfo;
+    document.getElementById('weightInfoLabel').style.display = weightInfo ? 'block' : 'none';
+
     // 处理图表数据
     const portfolioValues = data.portfolio_values || [];
     const benchmarkReturns = data.benchmark_returns || [];
@@ -1102,22 +1211,39 @@ async function saveStrategy() {
 }
 
 // 显示提示信息
-function showAlert(message, type = 'info') {
+function showAlert(message, type = 'info', duration = 0) {
     const alertDiv = document.createElement('div');
     alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
     alertDiv.innerHTML = `
         ${message}
         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
     `;
-    
     document.querySelector('.container').insertBefore(alertDiv, document.querySelector('.container').firstChild);
-    
-    // 3秒后自动消失
-    setTimeout(() => {
-        if (alertDiv.parentNode) {
-            alertDiv.remove();
-        }
-    }, 3000);
+
+    if (duration > 0) {
+        setTimeout(() => {
+            if (alertDiv.parentNode) alertDiv.remove();
+        }, duration);
+    }
+}
+
+function showLoadingOverlay(message) {
+    const id = 'loading_' + Date.now();
+    const overlay = document.createElement('div');
+    overlay.id = id;
+    overlay.className = 'alert alert-info text-center';
+    overlay.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9999;min-width:300px;box-shadow:0 4px 20px rgba(0,0,0,0.3);';
+    overlay.innerHTML = `
+        <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+        <span>${message}</span>
+    `;
+    document.body.appendChild(overlay);
+    return id;
+}
+
+function hideLoadingOverlay(id) {
+    const el = document.getElementById(id);
+    if (el) el.remove();
 }
 </script>
 {% endblock %} 

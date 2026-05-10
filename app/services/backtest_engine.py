@@ -277,15 +277,16 @@ class BacktestEngine:
                 if factor_scores.empty:
                     return []
                 
-                # 兼容前端 factor_weights 与旧字段 weights
+                # 支持从 strategy_config 指定 scoring_method
+                scoring_method = strategy_config.get('scoring_method', '')
                 weights_config = strategy_config.get('weights') or strategy_config.get('factor_weights') or {}
-                # 仅对因子表中存在的列保留权重，避免无效键
                 if weights_config:
                     weights_config = {
                         k: float(v) for k, v in weights_config.items()
                         if k in factor_scores.columns
                     }
-                scoring_method = 'factor_weight' if weights_config else 'equal_weight'
+                if not scoring_method:
+                    scoring_method = 'factor_weight' if weights_config else 'equal_weight'
                 composite_scores = self._get_scoring_engine().calculate_composite_score(
                     factor_scores, weights_config, scoring_method
                 )

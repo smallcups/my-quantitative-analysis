@@ -61,8 +61,9 @@ class StockScoringEngine:
             if factor_scores.empty:
                 return pd.DataFrame()
             
-            # 检查权重
-            if method != 'equal_weight' and not weights:
+            # 检查权重（rank_ic 和 ml_ensemble 会内部自动获取，不在此检查）
+            auto_methods = ('rank_ic', 'ml_ensemble')
+            if method not in auto_methods and method != 'equal_weight' and not weights:
                 logger.warning("未提供权重，使用等权重方法")
                 method = 'equal_weight'
             
@@ -113,16 +114,93 @@ class StockScoringEngine:
         return weighted_scores
     
     def _ml_ensemble_scoring(self, factor_scores: pd.DataFrame, weights: Dict[str, float]) -> pd.Series:
-        """机器学习集成评分"""
-        # TODO: 实现基于多个ML模型的集成评分
-        # 目前使用等权重作为占位符
-        return self._equal_weight_scoring(factor_scores, weights)
-    
+        """机器学习集成评分 - 使用多模型训练得到的特征重要性作为权重"""
+        if weights:
+            return self._factor_weight_scoring(factor_scores, weights)
+
+        try:
+            from app.models import MLModelDefinition
+
+            models = MLModelDefinition.query.filter(
+                MLModelDefinition.is_active == True,
+                MLModelDefinition.feature_importance.isnot(None)
+            ).all()
+
+            if not models:
+                logger.warning('No models with feature_importance, fallback to equal weight')
+                return self._equal_weight_scoring(factor_scores, weights)
+
+            all_importances = {}
+            for model in models:
+                fi = model.feature_importance
+                if fi:
+                    for factor_id, imp in fi.items():
+                        if factor_id not in all_importances:
+                            all_importances[factor_id] = []
+                        all_importances[factor_id].append(abs(imp))
+
+            averaged_weights = {
+                fid: float(np.mean(vals))
+                for fid, vals in all_importances.items() if vals
+            }
+
+            if not averaged_weights:
+                return self._equal_weight_scoring(factor_scores, weights)
+
+            total = sum(averaged_weights.values())
+            if total <= 0:
+                return self._equal_weight_scoring(factor_scores, weights)
+
+            normalized = {k: v / total for k, v in averaged_weights.items()}
+            usable_weights = {k: v for k, v in normalized.items() if k in factor_scores.columns}
+
+            if not usable_weights:
+                return self._equal_weight_scoring(factor_scores, weights)
+
+            logger.info(f'Using ML ensemble weights: {len(usable_weights)} factors from {len(models)} models')
+            return self._factor_weight_scoring(factor_scores, usable_weights)
+
+        except Exception as e:
+            logger.error(f'_ml_ensemble_scoring failed: {e}, fallback to equal weight')
+            return self._equal_weight_scoring(factor_scores, weights)
+
     def _rank_ic_scoring(self, factor_scores: pd.DataFrame, weights: Dict[str, float]) -> pd.Series:
-        """基于Rank IC的评分"""
-        # TODO: 实现基于历史Rank IC的动态权重评分
-        # 目前使用等权重作为占位符
-        return self._equal_weight_scoring(factor_scores, weights)
+        """基于Rank IC的动态权重评分 - 从FactorOptimizer获取最优权重"""
+        if weights:
+            return self._factor_weight_scoring(factor_scores, weights)
+
+        try:
+            from app.services.factor_optimizer import FactorOptimizer
+
+            optimizer = FactorOptimizer()
+            latest_date_query = db.session.query(
+                db.func.max(FactorValues.trade_date)
+            ).scalar()
+
+            if latest_date_query is None:
+                logger.warning('No factor value dates available, fallback to equal weight')
+                return self._equal_weight_scoring(factor_scores, weights)
+
+            eval_date = latest_date_query.strftime('%Y-%m-%d') if hasattr(latest_date_query, 'strftime') else str(latest_date_query)
+
+            result = optimizer.get_optimized_weights(
+                evaluation_date=eval_date,
+                forward_period=5,
+                method='ic_ir_weighted'
+            )
+
+            if 'error' in result or not result.get('weights'):
+                logger.warning(f'Optimizer returned no weights: {result.get("error", "unknown")}, fallback to equal weight')
+                return self._equal_weight_scoring(factor_scores, weights)
+
+            optimized_weights = result['weights']
+            logger.info(f'Using Rank IC optimized weights: {optimized_weights}')
+
+            return self._factor_weight_scoring(factor_scores, optimized_weights)
+
+        except Exception as e:
+            logger.error(f'_rank_ic_scoring failed: {e}, fallback to equal weight')
+            return self._equal_weight_scoring(factor_scores, weights)
     
     def rank_stocks(self, scores: pd.DataFrame, top_n: int = 50, 
                    filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:

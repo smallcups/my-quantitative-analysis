@@ -42,4 +42,9 @@ def analysis():
 @ml_factor_routes.route('/backtest')
 def backtest():
     """回测验证页面"""
-    return render_template('ml_factor/backtest.html') 
+    return render_template('ml_factor/backtest.html')
+
+@ml_factor_routes.route('/optimization')
+def optimization():
+    """因子优化页面 - 自动选择最佳因子和权重"""
+    return render_template('ml_factor/optimization.html') 
