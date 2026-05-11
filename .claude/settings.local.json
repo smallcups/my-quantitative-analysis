@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"D:\\\\quantitative_analysis\" -Depth 2)",
+      "Bash(Select-Object Mode, Name, Length)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(xargs wc -l)",
+      "Bash(Get-ChildItem -Path D:\\\\quantitative_analysis -Depth 1)",
+      "Bash(Select-Object FullName, Mode)",
+      "Bash(git checkout *)",
+      "Bash(.\\\\.venv\\\\Scripts\\\\python.exe *)",
+      "PowerShell(Test-NetConnection *)",
+      "PowerShell(Test-Connection *)",
+      "Bash(./.venv/Scripts/python.exe -c ' *)",
+      "Bash(py *)",
+      "Bash(./.venv313/Scripts/python.exe -m pip install baostock pandas pymysql -q)",
+      "Bash(./.venv313/Scripts/python.exe -c ' *)",
+      "Bash(./.venv313/Scripts/python.exe -m pip install -r requirements.txt)",
+      "Bash(./.venv313/Scripts/python.exe -m pip install -r requirements.txt --retries 5)",
+      "Bash(./.venv313/Scripts/python.exe scripts/seed_test_data.py)",
+      "Bash(./.venv313/Scripts/python.exe -m pip install akshare -q)",
+      "Bash(./.venv313/Scripts/python.exe -u scripts/seed_test_data.py)",
+      "Bash(./.venv313/Scripts/python.exe -u -c ' *)",
+      "Bash(./.venv313/Scripts/python.exe -m pip install efinance -q)",
+      "Bash(mysql *)",
+      "Bash(awk '{print $5, $NF}')",
+      "Bash(awk '{print $1}')",
+      "Bash(xargs kill)",
+      "Bash(./.venv313/Scripts/python.exe -u scripts/fast_import.py)",
+      "Bash(./.venv313/Scripts/python.exe -u scripts/calculate_factors.py)",
+      "Bash(./.venv313/Scripts/python.exe -u test_ic_debug.py)",
+      "Bash(./.venv313/Scripts/python.exe -u test_ic_final.py)",
+      "Bash(rm -f test_ic.py test_ic_debug.py test_ic_final.py test_ic.py test_download.py test_baostock.py test_imports.py)",
+      "Bash(ls test_*.py)",
+      "Bash(./.venv313/Scripts/pip.exe install *)",
+      "Bash(./.venv313/Scripts/python.exe scripts/generate_pdfs.py)",
+      "Bash(awk 'length>100{print NR\": \"length\" chars\"}' scripts/generate_pdfs.py)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
+    ]
+  }
+}

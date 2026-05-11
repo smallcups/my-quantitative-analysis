@@ -112,15 +112,6 @@
                             <option value="">Select Model</option>
                         </select>
                     </div>
-                    <div class="mb-3">
-                        <label for="modelWeight" class="form-label">Model Weight</label>
-                        <input type="range" class="form-range" id="modelWeight" min="0" max="100" value="70">
-                        <div class="d-flex justify-content-between">
-                            <small>0%</small>
-                            <small id="modelWeightValue">70%</small>
-                            <small>100%</small>
-                        </div>
-                    </div>
                 </div>
             </div>
         </div>
@@ -345,20 +336,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // 初始化事件监听器
 function initializeEventListeners() {
-    // 权重滑块事件
-    document.getElementById('modelWeight').addEventListener('input', function() {
-        const value = this.value;
-        document.getElementById('modelWeightValue').textContent = value + '%';
-        document.getElementById('factorWeight').value = 100 - value;
-        document.getElementById('factorWeightValue').textContent = (100 - value) + '%';
-    });
-    
-    document.getElementById('factorWeight').addEventListener('input', function() {
-        const value = this.value;
-        document.getElementById('factorWeightValue').textContent = value + '%';
-        document.getElementById('modelWeight').value = 100 - value;
-        document.getElementById('modelWeightValue').textContent = (100 - value) + '%';
-    });
+    // 手动权重滑块事件
+    const fwSlider = document.getElementById('factorWeight');
+    if (fwSlider) {
+        fwSlider.addEventListener('input', function() {
+            document.getElementById('factorWeightValue').textContent = this.value + '%';
+        });
+    }
 }
 
 // 加载模型列表
@@ -545,8 +529,6 @@ async function startBacktest() {
             factor_list: config.selected_factors,
             scoring_method: scoringMethod,
             factor_weights: scoringMethod === 'factor_weight' ? {} : {},
-            model_weight: config.model_weight,
-            factor_weight: config.factor_weight,
             top_n: config.stock_count,
             optimization: {
                 method: 'equal_weight',  // 简化处理
@@ -619,9 +601,7 @@ function getBacktestConfig() {
         slippage_rate: parseFloat(document.getElementById('slippageRate').value) / 100,
         benchmark_index: document.getElementById('benchmarkIndex').value,
         model_id: document.getElementById('selectedModel').value,
-        model_weight: parseFloat(document.getElementById('modelWeight').value) / 100,
-        selected_factors: selectedFactors,
-        factor_weight: parseFloat(document.getElementById('factorWeight').value) / 100
+        selected_factors: selectedFactors
     };
 }
 
