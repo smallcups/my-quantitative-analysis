@@ -20,20 +20,24 @@ class StockScoringEngine:
         }
     
     def calculate_factor_scores(self, trade_date: str, factor_list: List[str] = None,
-                               ts_codes: List[str] = None) -> pd.DataFrame:
+                               ts_codes: List[str] = None,
+                               factor_values_batch: pd.DataFrame = None) -> pd.DataFrame:
         """计算因子分数"""
         try:
-            # 构建查询
-            query = FactorValues.query.filter(FactorValues.trade_date == trade_date)
-            
-            if factor_list:
-                query = query.filter(FactorValues.factor_id.in_(factor_list))
-            
-            if ts_codes:
-                query = query.filter(FactorValues.ts_code.in_(ts_codes))
-            
-            # 获取因子数据
-            factor_data = pd.read_sql(query.statement, db.engine)
+            if factor_values_batch is not None and not factor_values_batch.empty:
+                batch_date = pd.Timestamp(trade_date)
+                factor_data = factor_values_batch[factor_values_batch['trade_date'] == batch_date]
+                if factor_list:
+                    factor_data = factor_data[factor_data['factor_id'].isin(factor_list)]
+                if ts_codes:
+                    factor_data = factor_data[factor_data['ts_code'].isin(ts_codes)]
+            else:
+                query = FactorValues.query.filter(FactorValues.trade_date == trade_date)
+                if factor_list:
+                    query = query.filter(FactorValues.factor_id.in_(factor_list))
+                if ts_codes:
+                    query = query.filter(FactorValues.ts_code.in_(ts_codes))
+                factor_data = pd.read_sql(query.statement, db.engine)
             
             if factor_data.empty:
                 logger.warning(f"未找到因子数据: {trade_date}")
@@ -291,48 +295,61 @@ class StockScoringEngine:
             return scores
     
     def _get_stock_info(self, ts_codes: List[str]) -> Dict[str, Dict[str, Any]]:
-        """获取股票基本信息"""
+        """获取股票基本信息（带内存缓存）。"""
         try:
-            stocks = StockBasic.query.filter(StockBasic.ts_code.in_(ts_codes)).all()
-            
-            stock_info = {}
-            for stock in stocks:
-                stock_info[stock.ts_code] = {
-                    'symbol': stock.symbol,
-                    'name': stock.name,
-                    'area': stock.area,
-                    'industry': stock.industry,
-                    'list_date': stock.list_date.isoformat() if stock.list_date else None
-                }
-            
-            return stock_info
-            
+            if not hasattr(self, '_stock_info_cache'):
+                self._stock_info_cache = {}
+
+            uncached = [c for c in ts_codes if c not in self._stock_info_cache]
+            if uncached:
+                stocks = StockBasic.query.filter(StockBasic.ts_code.in_(uncached)).all()
+                for stock in stocks:
+                    self._stock_info_cache[stock.ts_code] = {
+                        'symbol': stock.symbol,
+                        'name': stock.name,
+                        'area': stock.area,
+                        'industry': stock.industry,
+                        'list_date': stock.list_date.isoformat() if stock.list_date else None
+                    }
+
+            return {c: self._stock_info_cache[c] for c in ts_codes if c in self._stock_info_cache}
+
         except Exception as e:
             logger.error(f"获取股票信息失败: {e}")
             return {}
     
     def ml_based_selection(self, trade_date: str, model_ids: List[str],
-                          top_n: int = 50, ensemble_method: str = 'average') -> List[Dict[str, Any]]:
+                          top_n: int = 50, ensemble_method: str = 'average',
+                          predictions_batch: pd.DataFrame = None) -> List[Dict[str, Any]]:
         """基于机器学习模型的选股"""
         try:
             if not model_ids:
                 logger.warning("未提供模型ID")
                 return []
-            
-            # 获取所有模型的预测结果
+
             all_predictions = []
-            
-            for model_id in model_ids:
-                pred_query = MLPredictions.query.filter(
-                    MLPredictions.model_id == model_id,
-                    MLPredictions.trade_date == trade_date
-                ).order_by(MLPredictions.rank_score)
-                
-                pred_data = pd.read_sql(pred_query.statement, db.engine)
-                
-                if not pred_data.empty:
-                    pred_data['model_id'] = model_id
-                    all_predictions.append(pred_data)
+
+            if predictions_batch is not None and not predictions_batch.empty:
+                # 批量缓存路径：从预加载的 DataFrame 中筛选
+                batch_date = pd.Timestamp(trade_date)
+                batch = predictions_batch[predictions_batch['trade_date'] == batch_date]
+                for model_id in model_ids:
+                    pred_data = batch[batch['model_id'] == model_id]
+                    if not pred_data.empty:
+                        pred_data = pred_data.copy()
+                        pred_data['model_id'] = model_id
+                        all_predictions.append(pred_data)
+            else:
+                # 逐日查询路径（兜底）
+                for model_id in model_ids:
+                    pred_query = MLPredictions.query.filter(
+                        MLPredictions.model_id == model_id,
+                        MLPredictions.trade_date == trade_date
+                    ).order_by(MLPredictions.rank_score)
+                    pred_data = pd.read_sql(pred_query.statement, db.engine)
+                    if not pred_data.empty:
+                        pred_data['model_id'] = model_id
+                        all_predictions.append(pred_data)
             
             if not all_predictions:
                 logger.warning(f"未找到预测数据: {trade_date}")

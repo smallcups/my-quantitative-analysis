@@ -20,6 +20,52 @@ class FactorOptimizer:
         self.factor_engine = FactorEngine()
         self.DEFAULT_PERIODS = [1, 5, 20]
         self.MIN_SAMPLES = 30
+        self._ts_codes_cache = None
+        self._price_cache = None
+        self._price_cache_start_dt = None
+        self._price_cache_end_dt = None
+
+    # ============================================================
+    # 行情数据预加载
+    # ============================================================
+
+    def _warm_price_cache(self, start_date: str, end_date: str):
+        """预加载全市场行情数据到内存，避免逐日重复查询。"""
+        start_dt = pd.to_datetime(start_date).date()
+        end_dt = pd.to_datetime(end_date).date() + timedelta(days=30)
+
+        if (self._price_cache is not None
+                and self._price_cache_start_dt is not None
+                and start_dt >= self._price_cache_start_dt
+                and end_dt <= self._price_cache_end_dt):
+            return
+
+        if self._ts_codes_cache is None:
+            stocks = StockBasic.query.all()
+            self._ts_codes_cache = [s.ts_code for s in stocks]
+
+        price_query = db.session.query(
+            StockDailyHistory.ts_code, StockDailyHistory.trade_date, StockDailyHistory.close
+        ).filter(
+            StockDailyHistory.ts_code.in_(self._ts_codes_cache),
+            StockDailyHistory.trade_date >= start_dt,
+            StockDailyHistory.trade_date <= end_dt
+        ).order_by(StockDailyHistory.ts_code, StockDailyHistory.trade_date)
+
+        self._price_cache = pd.read_sql(price_query.statement, db.engine)
+        self._price_cache['trade_date'] = pd.to_datetime(self._price_cache['trade_date'])
+        self._price_cache_start_dt = start_dt
+        self._price_cache_end_dt = end_dt
+        logger.info(f'Price cache warmed: {len(self._price_cache)} rows, {start_dt} to {end_dt}')
+
+    def _precompute_forward_returns(self, forward_period: int):
+        """基于行情缓存，一次性计算所有 (ts_code, trade_date) 的 forward return。"""
+        if self._price_cache is None:
+            return None
+        pdf = self._price_cache.sort_values(['ts_code', 'trade_date'])
+        pdf['future_close'] = pdf.groupby('ts_code')['close'].shift(-forward_period)
+        pdf['forward_return'] = (pdf['future_close'] - pdf['close']) / pdf['close']
+        return pdf[['ts_code', 'trade_date', 'forward_return']].dropna()
 
     # ============================================================
     # Rank IC 计算 (核心统计方法)
@@ -41,39 +87,39 @@ class FactorOptimizer:
             if factor_df.empty:
                 return {'error': f'No factor data for {factor_id} on {trade_date}'}
 
-            if ts_codes is None:
+            ts_codes_list = ts_codes if ts_codes else self._ts_codes_cache
+            if ts_codes_list is None:
                 stocks = StockBasic.query.all()
                 ts_codes_list = [s.ts_code for s in stocks]
+
+            trade_dt = pd.Timestamp(trade_date)
+
+            # 优先使用预加载缓存
+            if self._price_cache is not None:
+                price_mask_future = self._price_cache['ts_code'].isin(ts_codes_list) & (self._price_cache['trade_date'] > trade_dt)
+                price_data = self._price_cache[price_mask_future].copy()
+                price_mask_current = self._price_cache['ts_code'].isin(ts_codes_list) & (self._price_cache['trade_date'] == trade_dt)
+                current_data = self._price_cache[price_mask_current].copy()
             else:
-                ts_codes_list = ts_codes
+                price_query = StockDailyHistory.query.filter(
+                    StockDailyHistory.ts_code.in_(ts_codes_list),
+                    StockDailyHistory.trade_date > trade_dt
+                ).order_by(StockDailyHistory.ts_code, StockDailyHistory.trade_date)
+                price_data = pd.read_sql(price_query.statement, db.engine)
 
-            trade_dt = pd.to_datetime(trade_date).date()
-
-            price_query = StockDailyHistory.query.filter(
-                StockDailyHistory.ts_code.in_(ts_codes_list),
-                StockDailyHistory.trade_date > trade_dt
-            ).order_by(StockDailyHistory.ts_code, StockDailyHistory.trade_date)
-
-            price_data = pd.read_sql(price_query.statement, db.engine)
+                current_query = StockDailyHistory.query.filter(
+                    StockDailyHistory.ts_code.in_(ts_codes_list),
+                    StockDailyHistory.trade_date == trade_dt
+                )
+                current_data = pd.read_sql(current_query.statement, db.engine)
 
             if price_data.empty:
                 return {'error': f'No price data after {trade_date}'}
-
-            # 读取当前日收盘价（向量化查询）
-            current_query = StockDailyHistory.query.filter(
-                StockDailyHistory.ts_code.in_(ts_codes_list),
-                StockDailyHistory.trade_date == trade_dt
-            )
-            current_data = pd.read_sql(current_query.statement, db.engine)
             if current_data.empty:
                 return {'error': f'No current price data for {trade_date}'}
 
-            current_prices = dict(zip(current_data['ts_code'], current_data['close']))
-
             # 向量化：对每只股票，按日期排序后取第 forward_period 个未来价
-            price_data['trade_date'] = pd.to_datetime(price_data['trade_date'])
             price_data = price_data.sort_values(['ts_code', 'trade_date'])
-            # 每只股票第N行 = 该股票未来第N天的价格
             position_counts = price_data.groupby('ts_code').cumcount()
             future_prices = price_data[position_counts == (forward_period - 1)][['ts_code', 'close']].rename(
                 columns={'close': 'future_close'}
@@ -126,29 +172,56 @@ class FactorOptimizer:
         factor_id: str,
         start_date: str,
         end_date: str,
-        forward_period: int = 5
+        forward_period: int = 5,
+        forward_returns: pd.DataFrame = None
     ) -> Dict[str, Any]:
         """
         计算历史窗口内的滚动 IC 统计指标：IC均值、标准差、IR、胜率。
+        传入 forward_returns 时走批量向量化路径，否则逐日计算。
         """
         try:
-            date_query = db.session.query(FactorValues.trade_date).filter(
+            start_dt = pd.to_datetime(start_date)
+            end_dt = pd.to_datetime(end_date)
+
+            fv_query = FactorValues.query.filter(
                 FactorValues.factor_id == factor_id,
-                FactorValues.trade_date >= start_date,
-                FactorValues.trade_date <= end_date
-            ).distinct().order_by(FactorValues.trade_date)
+                FactorValues.trade_date >= start_dt,
+                FactorValues.trade_date <= end_dt
+            )
+            fv_df = pd.read_sql(fv_query.statement, db.engine)
 
-            trade_dates = [row[0] for row in date_query.all()]
+            if fv_df.empty:
+                return {
+                    'error': f'No factor values for {factor_id}',
+                    'factor_id': factor_id, 'forward_period': forward_period,
+                    'ic_values': [], 'dates': []
+                }
 
-            ic_series = []
-            valid_dates = []
+            if forward_returns is not None and not forward_returns.empty:
+                # 批量向量化路径：一次 merge + groupby.rank.corr 替代逐日循环
+                fv_df['trade_date'] = pd.to_datetime(fv_df['trade_date'])
+                merged = pd.merge(fv_df, forward_returns, on=['ts_code', 'trade_date'], how='inner')
+                merged = merged.dropna(subset=['factor_value', 'forward_return'])
 
-            for single_date in trade_dates:
-                date_str = single_date.strftime('%Y-%m-%d') if hasattr(single_date, 'strftime') else str(single_date)
-                result = self.compute_rank_ic(factor_id, date_str, forward_period)
-                if result.get('success'):
-                    ic_series.append(result['ic_value'])
-                    valid_dates.append(single_date)
+                def _safe_rank_ic(grp):
+                    if len(grp) < self.MIN_SAMPLES:
+                        return np.nan
+                    return grp['factor_value'].rank().corr(grp['forward_return'].rank())
+
+                ic_by_date = merged.groupby('trade_date').apply(_safe_rank_ic).dropna()
+                ic_series = ic_by_date.tolist()
+                valid_dates = ic_by_date.index.tolist()
+            else:
+                # 逐日计算路径（无缓存时兜底）
+                ic_series = []
+                valid_dates = []
+                trade_dates = sorted(fv_df['trade_date'].unique())
+                for single_date in trade_dates:
+                    date_str = pd.Timestamp(single_date).strftime('%Y-%m-%d')
+                    result = self.compute_rank_ic(factor_id, date_str, forward_period)
+                    if result.get('success'):
+                        ic_series.append(result['ic_value'])
+                        valid_dates.append(single_date)
 
             if len(ic_series) < 3:
                 return {
@@ -199,7 +272,8 @@ class FactorOptimizer:
         """对所有因子运行多周期 IC 分析并持久化。"""
         periods = forward_periods or self.DEFAULT_PERIODS
 
-        # 只分析在 factor_values 表中有数据的因子
+        self._warm_price_cache(start_date, end_date)
+
         from app.models import FactorValues
         active_query = db.session.query(FactorValues.factor_id).distinct()
         factor_ids = sorted([row[0] for row in active_query.all()])
@@ -207,15 +281,15 @@ class FactorOptimizer:
         results_by_period = {}
 
         for period in periods:
-            factor_results = []
-            for factor_id in factor_ids:
-                try:
-                    stats = self.compute_rolling_ic_statistics(factor_id, start_date, end_date, forward_period=period)
-                    factor_results.append(stats)
-                    self._persist_effectiveness(stats)
-                except Exception as e:
-                    logger.error(f'analyze factor {factor_id} failed: {e}')
-                    factor_results.append({'factor_id': factor_id, 'error': str(e)})
+            forward_returns = self._precompute_forward_returns(period)
+            if forward_returns is None or forward_returns.empty:
+                continue
+
+            factor_results = self._batch_all_factors_ic(
+                factor_ids, start_date, end_date, period, forward_returns
+            )
+            for stats in factor_results:
+                self._persist_effectiveness(stats)
 
             results_by_period[str(period)] = {
                 'factors': factor_results,
@@ -229,6 +303,83 @@ class FactorOptimizer:
             'forward_periods': periods,
             'results': results_by_period
         }
+
+    def _batch_all_factors_ic(
+        self,
+        factor_ids: list,
+        start_date: str,
+        end_date: str,
+        forward_period: int,
+        forward_returns: pd.DataFrame
+    ) -> list:
+        """一次 SQL 查询所有因子，内存中按 factor_id 拆分后逐因子 merge + groupby。"""
+        start_dt = pd.to_datetime(start_date)
+        end_dt = pd.to_datetime(end_date)
+
+        # 一次查询：只选 3 列 + factor_id
+        cols = [FactorValues.factor_id, FactorValues.ts_code,
+                FactorValues.trade_date, FactorValues.factor_value]
+        fv_query = db.session.query(*cols).filter(
+            FactorValues.factor_id.in_(factor_ids),
+            FactorValues.trade_date >= start_dt,
+            FactorValues.trade_date <= end_dt
+        )
+        all_fv = pd.read_sql(fv_query.statement, db.engine)
+        if all_fv.empty:
+            return [{'factor_id': fid, 'error': 'No factor values', 'success': False}
+                    for fid in factor_ids]
+
+        all_fv['trade_date'] = pd.to_datetime(all_fv['trade_date'])
+
+        # 一次 merge 连接到 forward_returns
+        merged = pd.merge(all_fv, forward_returns, on=['ts_code', 'trade_date'], how='inner')
+        merged = merged.dropna(subset=['factor_value', 'forward_return'])
+        if merged.empty:
+            return [{'factor_id': fid, 'error': 'No matches', 'success': False}
+                    for fid in factor_ids]
+
+        results = []
+        for fid in factor_ids:
+            fv_subset = merged[merged['factor_id'] == fid]
+            if fv_subset.empty:
+                results.append({'factor_id': fid, 'error': 'No data', 'success': False})
+                continue
+
+            def _rank_ic(grp):
+                if len(grp) < self.MIN_SAMPLES:
+                    return np.nan
+                return grp['factor_value'].rank().corr(grp['forward_return'].rank())
+
+            ic_by_date = fv_subset.groupby('trade_date').apply(_rank_ic).dropna()
+            ic_series = ic_by_date.tolist()
+            valid_dates = ic_by_date.index.tolist()
+
+            if len(ic_series) < 3:
+                results.append({
+                    'error': f'Too few valid IC observations: {len(ic_series)} < 3',
+                    'factor_id': fid, 'forward_period': forward_period,
+                    'ic_values': ic_series, 'dates': [str(d) for d in valid_dates]
+                })
+                continue
+
+            ic_array = np.array(ic_series)
+            results.append({
+                'factor_id': fid,
+                'forward_period': forward_period,
+                'evaluation_date': end_date,
+                'ic_mean': float(np.mean(ic_array)),
+                'ic_std': float(np.std(ic_array, ddof=1)),
+                'ic_ir': float(np.mean(ic_array) / np.std(ic_array, ddof=1)) if np.std(ic_array, ddof=1) > 0 else 0.0,
+                'ic_win_rate': float(np.sum(ic_array > 0) / len(ic_array)),
+                'latest_ic': ic_series[-1],
+                'sample_count': len(ic_series),
+                'factor_direction': 'positive' if np.mean(ic_array) > 0 else 'negative',
+                'ic_series': ic_series,
+                'dates': [str(d) for d in valid_dates],
+                'success': True
+            })
+
+        return results
 
     def _persist_effectiveness(self, stats: Dict[str, Any]) -> None:
         """将 IC 统计结果持久化到 factor_effectiveness 表。"""
@@ -463,14 +614,22 @@ class FactorOptimizer:
         max_factors: int = 10
     ) -> Dict[str, Any]:
         """端到端获取优化后的因子权重。优先持久化数据，其次直接运行分析。"""
-        latest_records = self._get_latest_effectiveness(forward_period)
+        if start_date is None:
+            dt = pd.to_datetime(evaluation_date)
+            start_date = (dt - timedelta(days=252)).strftime('%Y-%m-%d')
 
-        if not latest_records:
-            if start_date is None:
-                dt = pd.to_datetime(evaluation_date)
-                start_date = (dt - timedelta(days=252)).strftime('%Y-%m-%d')
+        latest_records = self._get_latest_effectiveness(forward_period, evaluation_date)
+
+        needs_recompute = False
+        if latest_records:
+            cached_dates = set(r.get('evaluation_date') for r in latest_records)
+            if evaluation_date not in cached_dates or len(cached_dates) != 1:
+                needs_recompute = True
+
+        if not latest_records or needs_recompute:
+            if needs_recompute:
+                logger.info(f'Stale cache found (db dates: {cached_dates}), recomputing for {evaluation_date}')
             analysis = self.analyze_all_factors(start_date, evaluation_date, [forward_period])
-            # 直接从分析结果提取有效性数据
             for period_str, period_data in analysis.get('results', {}).items():
                 if int(period_str) == forward_period:
                     latest_records = [
@@ -478,9 +637,8 @@ class FactorOptimizer:
                         if f.get('success')
                     ]
                     break
-            # 如果持久化成功了，重试从 DB 读取
             if not latest_records:
-                latest_records = self._get_latest_effectiveness(forward_period)
+                latest_records = self._get_latest_effectiveness(forward_period, evaluation_date)
 
         if not latest_records:
             return {'error': 'No effectiveness data available', 'weights': {}}
@@ -511,15 +669,17 @@ class FactorOptimizer:
             }
         }
 
-    def _get_latest_effectiveness(self, forward_period: int = 5) -> List[Dict[str, Any]]:
-        """获取每个因子最新一期有效性评估数据。"""
+    def _get_latest_effectiveness(self, forward_period: int = 5, evaluation_date: str = None) -> List[Dict[str, Any]]:
+        """获取每个因子在指定日期之前最新一期有效性评估数据。"""
         try:
+            filters = [FactorEffectiveness.forward_period == forward_period]
+            if evaluation_date:
+                filters.append(FactorEffectiveness.evaluation_date <= evaluation_date)
+
             subq = db.session.query(
                 FactorEffectiveness.factor_id,
                 db.func.max(FactorEffectiveness.evaluation_date).label('max_date')
-            ).filter(
-                FactorEffectiveness.forward_period == forward_period
-            ).group_by(FactorEffectiveness.factor_id).subquery()
+            ).filter(*filters).group_by(FactorEffectiveness.factor_id).subquery()
 
             query = db.session.query(FactorEffectiveness).join(
                 subq,

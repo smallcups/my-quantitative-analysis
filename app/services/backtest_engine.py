@@ -22,6 +22,10 @@ class BacktestEngine:
         self.ml_manager = None
         self.scoring_engine = None
         self.portfolio_optimizer = None
+        self._price_batch = None  # {(trade_date_str, ts_code): close}
+        self._predictions_batch = None  # pre-loaded ML predictions DataFrame
+        self._factor_values_batch = None  # pre-loaded factor values DataFrame
+        self._stock_info_cache = {}  # {ts_code: stock_info_dict}
     
     def _get_factor_engine(self):
         """延迟初始化因子引擎"""
@@ -66,7 +70,18 @@ class BacktestEngine:
         """
         try:
             logger.info(f"开始回测: {start_date} to {end_date}")
-            
+
+            # 批量预加载数据，消除逐日查询
+            self._batch_warm_prices(start_date, end_date)
+            self._warm_stock_info()
+            selection_method = strategy_config.get('selection_method', 'factor_based')
+            if selection_method == 'ml_based':
+                model_ids = self._extract_model_ids(strategy_config)
+                if model_ids:
+                    self._batch_warm_predictions(model_ids, start_date, end_date)
+            else:
+                self._batch_warm_factor_values(start_date, end_date)
+
             # 生成交易日期
             trade_dates = self._generate_trade_dates(start_date, end_date, rebalance_frequency)
             
@@ -99,7 +114,7 @@ class BacktestEngine:
                     
                     # 取价必须包含：当前持仓 + 本期目标持仓，否则首调仓 positions 为空时无法拿到新买入股票的收盘价
                     price_ts_codes = list(set(positions.keys()) | set(target_weights.keys()))
-                    current_prices = self._get_current_prices(trade_date, price_ts_codes)
+                    current_prices = self._get_batch_prices(trade_date, price_ts_codes)
                     
                     # 再平衡前组合市值（用于下单金额）
                     current_portfolio_value = self._calculate_portfolio_value(
@@ -254,7 +269,8 @@ class BacktestEngine:
                     return []
                 
                 selected = self._get_scoring_engine().ml_based_selection(
-                    trade_date, model_ids, top_n, 'average'
+                    trade_date, model_ids, top_n, 'average',
+                    predictions_batch=self._predictions_batch
                 )
                 if selected:
                     return selected
@@ -271,7 +287,8 @@ class BacktestEngine:
                     return []
                 
                 factor_scores = self._get_scoring_engine().calculate_factor_scores(
-                    trade_date, factor_list
+                    trade_date, factor_list,
+                    factor_values_batch=self._factor_values_batch
                 )
                 
                 if factor_scores.empty:
@@ -297,7 +314,87 @@ class BacktestEngine:
             logger.error(f"获取股票选择结果失败: {e}")
             return []
 
-    def _extract_model_ids(self, strategy_config: Dict[str, Any]) -> List[str]:
+    def _batch_warm_prices(self, start_date: str, end_date: str):
+        """批量预加载整个回测区间的收盘价。"""
+        if self._price_batch is not None:
+            return
+        query = db.session.query(
+            StockDailyHistory.ts_code, StockDailyHistory.trade_date, StockDailyHistory.close
+        ).filter(
+            StockDailyHistory.trade_date >= start_date,
+            StockDailyHistory.trade_date <= end_date
+        )
+        df = pd.read_sql(query.statement, db.engine)
+        self._price_batch = {}
+        for _, row in df.iterrows():
+            self._price_batch[(str(row.trade_date)[:10], row.ts_code)] = float(row.close)
+        logger.info(f'Price batch warmed: {len(self._price_batch)} entries')
+
+    def _batch_warm_predictions(self, model_ids: list, start_date: str, end_date: str):
+        """批量预加载整个回测区间的 ML 预测数据。"""
+        if self._predictions_batch is not None:
+            return
+        query = db.session.query(
+            MLPredictions.model_id, MLPredictions.ts_code, MLPredictions.trade_date,
+            MLPredictions.predicted_return, MLPredictions.probability_score, MLPredictions.rank_score
+        ).filter(
+            MLPredictions.model_id.in_(model_ids),
+            MLPredictions.trade_date >= start_date,
+            MLPredictions.trade_date <= end_date
+        )
+        self._predictions_batch = pd.read_sql(query.statement, db.engine)
+        if not self._predictions_batch.empty:
+            self._predictions_batch['trade_date'] = pd.to_datetime(self._predictions_batch['trade_date'])
+        logger.info(f'Predictions batch warmed: {len(self._predictions_batch)} rows')
+
+    def _batch_warm_factor_values(self, start_date: str, end_date: str):
+        """批量预加载整个回测区间的因子数据。"""
+        if self._factor_values_batch is not None:
+            return
+        query = db.session.query(
+            FactorValues.ts_code, FactorValues.trade_date,
+            FactorValues.factor_id, FactorValues.z_score
+        ).filter(
+            FactorValues.trade_date >= start_date,
+            FactorValues.trade_date <= end_date
+        )
+        self._factor_values_batch = pd.read_sql(query.statement, db.engine)
+        if not self._factor_values_batch.empty:
+            self._factor_values_batch['trade_date'] = pd.to_datetime(self._factor_values_batch['trade_date'])
+        logger.info(f'Factor values batch warmed: {len(self._factor_values_batch)} rows')
+
+    def _warm_stock_info(self):
+        """缓存全量股票基本信息。"""
+        if self._stock_info_cache:
+            return
+        from app.models import StockBasic
+        stocks = StockBasic.query.all()
+        self._stock_info_cache = {
+            s.ts_code: {
+                'ts_code': s.ts_code, 'name': s.name, 'industry': getattr(s, 'industry', ''),
+                'area': getattr(s, 'area', ''), 'market': getattr(s, 'market', ''),
+                'list_date': str(getattr(s, 'list_date', ''))
+            }
+            for s in stocks
+        }
+        logger.info(f'Stock info cached: {len(self._stock_info_cache)} stocks')
+
+    def _get_batch_prices(self, trade_date: str, ts_codes: list) -> dict:
+        """从批量缓存获取价格。"""
+        if self._price_batch is None:
+            return self._get_current_prices(trade_date, ts_codes)
+        return {
+            ts_code: self._price_batch[(trade_date, ts_code)]
+            for ts_code in ts_codes
+            if (trade_date, ts_code) in self._price_batch
+        }
+
+    def _get_batch_stock_info(self, ts_codes: list) -> dict:
+        """从缓存获取股票信息。"""
+        if not self._stock_info_cache:
+            self._warm_stock_info()
+        return {ts_code: self._stock_info_cache[ts_code]
+                for ts_code in ts_codes if ts_code in self._stock_info_cache}
         """兼容 model_id/model_ids 两种入参格式。"""
         model_ids = strategy_config.get('model_ids')
         if not model_ids:
