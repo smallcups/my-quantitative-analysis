@@ -360,7 +360,8 @@ def get_auto_weights():
             'evaluation_date': result.get('evaluation_date'),
             'start_date': result.get('start_date'),
             'forward_period': result.get('forward_period'),
-            'weight_method': result.get('weight_method')
+            'weight_method': result.get('weight_method'),
+            'data_freshness': result.get('data_freshness')
         })
 
     except Exception as e:
@@ -619,6 +620,125 @@ def ml_based_scoring():
         
     except Exception as e:
         logger.error(f"基于机器学习的股票选择失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@ml_factor_bp.route('/scoring/hybrid', methods=['POST'])
+def hybrid_scoring():
+    """混合因子 + ML 选股"""
+    try:
+        data = request.get_json()
+        trade_date = data.get('trade_date')
+        if not trade_date:
+            return jsonify({'error': '缺少交易日期参数'}), 400
+
+        factor_list = data.get('factor_list', [])
+        model_ids = data.get('model_ids', [])
+        if not factor_list or not model_ids:
+            return jsonify({'error': '混合方法需要同时提供 factor_list 和 model_ids'}), 400
+
+        top_n = data.get('top_n', 50)
+        blend_weight = data.get('blend_weight')
+        factor_scoring_method = data.get('factor_scoring_method', 'rank_ic')
+        ensemble_method = data.get('ensemble_method', 'average')
+        weights = data.get('weights', {})
+
+        top_stocks = get_scoring_engine().hybrid_selection(
+            trade_date, factor_list, model_ids, top_n,
+            blend_weight=blend_weight,
+            factor_scoring_method=factor_scoring_method,
+            factor_scoring_weights=weights,
+            ensemble_method=ensemble_method,
+        )
+
+        if not top_stocks:
+            return jsonify({'error': '混合选股失败'}), 500
+
+        return jsonify({
+            'success': True,
+            'trade_date': trade_date,
+            'blend_weight': top_stocks[0].get('blend_weight'),
+            'total_stocks': len(top_stocks),
+            'top_stocks': top_stocks,
+        })
+    except Exception as e:
+        logger.error(f"混合选股失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@ml_factor_bp.route('/hybrid/auto-config', methods=['POST'])
+def hybrid_auto_config():
+    """Hybrid 模式专属：一次返回因子权重 + 模型列表 + 预估 blend_weight"""
+    try:
+        data = request.get_json() or {}
+        evaluation_date = data.get('evaluation_date') or datetime.utcnow().strftime('%Y-%m-%d')
+        start_date = data.get('start_date')
+        forward_period = data.get('forward_period', 5)
+
+        # 1. 因子侧：复用的 auto-weight 逻辑
+        factor_result = get_factor_optimizer().get_optimized_weights(
+            evaluation_date=evaluation_date,
+            start_date=start_date,
+            forward_period=forward_period,
+            method='ic_ir_weighted',
+            ic_ir_threshold=data.get('ic_ir_threshold', 0.1),
+            max_correlation=data.get('max_correlation', 0.7),
+            min_factors=data.get('min_factors', 2),
+            max_factors=data.get('max_factors', 8)
+        )
+
+        # 2. 模型侧：查询所有模型 + 质量信息
+        from app.models import MLModelDefinition, MLPredictions
+        models = MLModelDefinition.query.filter_by(is_active=True).all()
+        model_list = []
+        for m in models:
+            pred_count = MLPredictions.query.filter_by(model_id=m.model_id).count()
+            has_imp = bool(m.feature_importance and len(m.feature_importance) > 0)
+            model_list.append({
+                'model_id': m.model_id,
+                'model_name': m.model_name,
+                'model_type': m.model_type,
+                'prediction_count': pred_count,
+                'has_feature_importance': has_imp,
+                'factor_list': m.factor_list or []
+            })
+
+        # 3. 模型侧权重：按预测数量归一化（后续可改为 R² / feature_importance）
+        trained = [m for m in model_list if m['prediction_count'] > 0]
+        if trained:
+            total = sum(m['prediction_count'] for m in trained)
+            for m in trained:
+                m['weight'] = round(m['prediction_count'] / total, 6) if total > 0 else 0.0
+        for m in model_list:
+            if 'weight' not in m:
+                m['weight'] = 0.0
+
+        # 4. 预估 blend_weight
+        factor_ids = list(factor_result.get('weights', {}).keys())
+        model_ids = [m['model_id'] for m in trained]
+        blend_weight = 0.5
+        if factor_ids and model_ids:
+            blend_weight = get_scoring_engine()._determine_optimal_blend_weight(
+                evaluation_date, factor_ids, model_ids, forward_period
+            )
+
+        return jsonify({
+            'success': True,
+            'evaluation_date': evaluation_date,
+            'start_date': factor_result.get('start_date'),
+            'data_freshness': factor_result.get('data_freshness'),
+            'factors': factor_result.get('selected_factors', {}),
+            'factor_weights': factor_result.get('weights', {}),
+            'models': model_list,
+            'model_weights': {m['model_id']: m['weight'] for m in model_list},
+            'model_count': len(model_list),
+            'trained_model_count': len(trained),
+            'blend_weight': blend_weight,
+            'weight_method': 'ic_ir_weighted'
+        })
+
+    except Exception as e:
+        logger.error(f"Hybrid auto-config 失败: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -941,44 +1061,48 @@ def integrated_portfolio_selection():
         constraints = data.get('constraints')
         
         # 步骤1: 股票选择
-        if selection_method == 'ml_based' and model_ids:
+        if selection_method == 'hybrid' and model_ids and factor_list:
+            selected_stocks = get_scoring_engine().hybrid_selection(
+                trade_date, factor_list, model_ids, top_n,
+                blend_weight=data.get('blend_weight'),
+                factor_scoring_method=data.get('factor_scoring_method', 'rank_ic'),
+                factor_scoring_weights=weights_config,
+                ensemble_method='average',
+            )
+            if not selected_stocks:
+                return jsonify({'error': '混合选股失败'}), 500
+            expected_returns = pd.Series({
+                stock['ts_code']: stock['composite_score']
+                for stock in selected_stocks
+            })
+
+        elif selection_method == 'ml_based' and model_ids:
             # 基于ML模型选股
             selected_stocks = get_scoring_engine().ml_based_selection(
                 trade_date, model_ids, top_n, 'average'
             )
-            
             if not selected_stocks:
                 return jsonify({'error': 'ML选股失败'}), 500
-            
-            # 提取预期收益率
             expected_returns = pd.Series({
-                stock['ts_code']: stock['ensemble_score'] 
+                stock['ts_code']: stock['ensemble_score']
                 for stock in selected_stocks
             })
-            
+
         else:
             # 基于因子选股
             factor_scores = get_scoring_engine().calculate_factor_scores(trade_date, factor_list)
-            
             if factor_scores.empty:
                 return jsonify({'error': '未找到因子数据'}), 404
-            
             composite_scores = get_scoring_engine().calculate_composite_score(
                 factor_scores, weights_config, 'factor_weight'
             )
-            
             if composite_scores.empty:
                 return jsonify({'error': '计算综合分数失败'}), 500
-            
-            # 选择前N只股票
             top_stocks_data = get_scoring_engine().rank_stocks(composite_scores, top_n)
-            
             if not top_stocks_data:
                 return jsonify({'error': '选股失败'}), 500
-            
-            # 提取预期收益率
             expected_returns = pd.Series({
-                stock['ts_code']: stock['composite_score'] 
+                stock['ts_code']: stock['composite_score']
                 for stock in top_stocks_data
             })
         

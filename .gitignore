@@ -80,7 +80,12 @@ logs/
 # Models and data
 /models/
 /data/
+
+
+
+
 *.pkl
+
 *.joblib
 *.h5
 *.model

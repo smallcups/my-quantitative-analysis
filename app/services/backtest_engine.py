@@ -25,6 +25,7 @@ class BacktestEngine:
         self._price_batch = None  # {(trade_date_str, ts_code): close}
         self._predictions_batch = None  # pre-loaded ML predictions DataFrame
         self._factor_values_batch = None  # pre-loaded factor values DataFrame
+        self._factor_scores_cache = {}  # {trade_date: factor_scores DataFrame}
         self._stock_info_cache = {}  # {ts_code: stock_info_dict}
     
     def _get_factor_engine(self):
@@ -75,27 +76,67 @@ class BacktestEngine:
             self._batch_warm_prices(start_date, end_date)
             self._warm_stock_info()
             selection_method = strategy_config.get('selection_method', 'factor_based')
-            if selection_method == 'ml_based':
+            has_factor = bool(strategy_config.get('factor_list'))
+            has_model = bool(self._extract_model_ids(strategy_config))
+            if selection_method in ('ml_based', 'hybrid') and has_model:
                 model_ids = self._extract_model_ids(strategy_config)
-                if model_ids:
-                    self._batch_warm_predictions(model_ids, start_date, end_date)
-            else:
+                self._batch_warm_predictions(model_ids, start_date, end_date)
+            if selection_method in ('factor_based', 'hybrid') and has_factor:
                 self._batch_warm_factor_values(start_date, end_date)
+
+            # 预计算 IC 权重（rank_ic 模式只算一次，避免每日期重复调用 FactorOptimizer）
+            scoring_method = strategy_config.get('scoring_method', '')
+            if scoring_method == 'rank_ic' and strategy_config.get('factor_list'):
+                try:
+                    from app.services.factor_optimizer import FactorOptimizer
+                    opt = FactorOptimizer()
+                    ic_result = opt.get_optimized_weights(
+                        evaluation_date=end_date, start_date=start_date,
+                        forward_period=5, method='ic_ir_weighted',
+                        ic_ir_threshold=0.1, min_factors=2, max_factors=8
+                    )
+                    if ic_result.get('weights'):
+                        strategy_config = dict(strategy_config)
+                        strategy_config['weights'] = ic_result['weights']
+                        strategy_config['scoring_method'] = 'factor_weight'
+                        logger.info('IC weights pre-computed for backtest: {}'.format(
+                            len(ic_result['weights'])))
+                except Exception as e:
+                    logger.warning(f'IC weight pre-compute failed: {e}')
+
+            # 预计算所有日期的因子分数（消除逐日 pandas 过滤）
+            if self._factor_values_batch is not None and strategy_config.get('factor_list'):
+                use_factors = strategy_config['factor_list']
+                scoring = self._get_scoring_engine()
+                wt = strategy_config.get('weights') or strategy_config.get('factor_weights') or {}
+                sm = strategy_config.get('scoring_method', 'equal_weight')
+                self._factor_scores_cache.clear()
+                all_dates = sorted(self._factor_values_batch['trade_date'].unique())
+                for d in all_dates:
+                    d_str = pd.Timestamp(d).strftime('%Y-%m-%d')
+                    fs = scoring.calculate_factor_scores(d_str, use_factors,
+                                                         factor_values_batch=self._factor_values_batch)
+                    if not fs.empty:
+                        comp = scoring.calculate_composite_score(fs, wt, sm)
+                        if not comp.empty:
+                            self._factor_scores_cache[d_str] = comp
+                logger.info('Factor scores pre-computed for {} dates'.format(
+                    len(self._factor_scores_cache)))
 
             # 生成交易日期
             trade_dates = self._generate_trade_dates(start_date, end_date, rebalance_frequency)
-            
+
             # 初始化回测状态
             portfolio_values = []
             positions = {}
             cash = initial_capital
             total_value = initial_capital
-            
+
             # 记录每日数据
             daily_returns = []
             daily_positions = []
             daily_turnover = []
-            
+
             for i, trade_date in enumerate(trade_dates):
                 logger.info(f"处理交易日: {trade_date}")
                 
@@ -256,7 +297,27 @@ class BacktestEngine:
             logger.error(f"生成交易日期失败: {e}")
             return []
     
-    def _get_stock_selection(self, strategy_config: Dict[str, Any], 
+    def _extract_model_ids(self, strategy_config: dict) -> list:
+        """兼容 model_id/model_ids 两种入参格式。"""
+        model_ids = strategy_config.get('model_ids')
+        if not model_ids:
+            single = strategy_config.get('model_id')
+            model_ids = [single] if single is not None else []
+        elif not isinstance(model_ids, list):
+            model_ids = [model_ids]
+        normalized = []
+        seen = set()
+        for mid in model_ids:
+            if mid is None:
+                continue
+            mid_str = str(mid).strip()
+            if not mid_str or mid_str in seen:
+                continue
+            normalized.append(mid_str)
+            seen.add(mid_str)
+        return normalized
+
+    def _get_stock_selection(self, strategy_config: Dict[str, Any],
                            trade_date: str) -> List[Dict[str, Any]]:
         """获取股票选择结果"""
         try:
@@ -267,7 +328,7 @@ class BacktestEngine:
                 model_ids = self._extract_model_ids(strategy_config)
                 if not model_ids:
                     return []
-                
+
                 selected = self._get_scoring_engine().ml_based_selection(
                     trade_date, model_ids, top_n, 'average',
                     predictions_batch=self._predictions_batch
@@ -281,33 +342,60 @@ class BacktestEngine:
 
                 logger.info(f"日期 {trade_date} 预计算预测缺失，尝试现场打分")
                 return self._get_live_ml_selection(trade_date, model_ids, top_n)
+
+            elif selection_method == 'hybrid':
+                factor_list = strategy_config.get('factor_list', [])
+                model_ids = self._extract_model_ids(strategy_config)
+                if not model_ids or not factor_list:
+                    logger.warning("混合方法需要同时提供 model_ids 和 factor_list")
+                    return []
+
+                weights_config = strategy_config.get('weights') or strategy_config.get('factor_weights') or {}
+                if weights_config:
+                    weights_config = {k: float(v) for k, v in weights_config.items()}
+
+                scoring_method = strategy_config.get('scoring_method', 'rank_ic')
+                blend_weight = strategy_config.get('blend_weight')
+
+                return self._get_scoring_engine().hybrid_selection(
+                    trade_date, factor_list, model_ids, top_n,
+                    blend_weight=blend_weight,
+                    factor_scoring_method=scoring_method,
+                    factor_scoring_weights=weights_config,
+                    ensemble_method='average',
+                    predictions_batch=self._predictions_batch,
+                    factor_values_batch=self._factor_values_batch
+                )
+
             else:
                 factor_list = strategy_config.get('factor_list', [])
                 if not factor_list:
                     return []
-                
-                factor_scores = self._get_scoring_engine().calculate_factor_scores(
-                    trade_date, factor_list,
-                    factor_values_batch=self._factor_values_batch
-                )
-                
-                if factor_scores.empty:
-                    return []
-                
-                # 支持从 strategy_config 指定 scoring_method
-                scoring_method = strategy_config.get('scoring_method', '')
-                weights_config = strategy_config.get('weights') or strategy_config.get('factor_weights') or {}
-                if weights_config:
-                    weights_config = {
-                        k: float(v) for k, v in weights_config.items()
-                        if k in factor_scores.columns
-                    }
-                if not scoring_method:
-                    scoring_method = 'factor_weight' if weights_config else 'equal_weight'
-                composite_scores = self._get_scoring_engine().calculate_composite_score(
-                    factor_scores, weights_config, scoring_method
-                )
-                
+
+                # 优先使用预计算的综合分数
+                composite_scores = self._factor_scores_cache.get(trade_date)
+                if composite_scores is None:
+                    factor_scores = self._get_scoring_engine().calculate_factor_scores(
+                        trade_date, factor_list,
+                        factor_values_batch=self._factor_values_batch
+                    )
+                    if factor_scores.empty:
+                        return []
+                    scoring_method = strategy_config.get('scoring_method', '')
+                    weights_config = strategy_config.get('weights') or strategy_config.get('factor_weights') or {}
+                    if weights_config:
+                        weights_config = {
+                            k: float(v) for k, v in weights_config.items()
+                            if k in factor_scores.columns
+                        }
+                    if not scoring_method:
+                        scoring_method = 'factor_weight' if weights_config else 'equal_weight'
+                    composite_scores = self._get_scoring_engine().calculate_composite_score(
+                        factor_scores, weights_config, scoring_method
+                    )
+                    if composite_scores.empty:
+                        return []
+
                 return self._get_scoring_engine().rank_stocks(composite_scores, top_n)
                 
         except Exception as e:
@@ -383,10 +471,12 @@ class BacktestEngine:
         """从批量缓存获取价格。"""
         if self._price_batch is None:
             return self._get_current_prices(trade_date, ts_codes)
+        # trade_date 可能是 date/datetime 对象，统一转成字符串匹配缓存 key
+        date_str = str(trade_date)[:10] if not isinstance(trade_date, str) else trade_date
         return {
-            ts_code: self._price_batch[(trade_date, ts_code)]
+            ts_code: self._price_batch[(date_str, ts_code)]
             for ts_code in ts_codes
-            if (trade_date, ts_code) in self._price_batch
+            if (date_str, ts_code) in self._price_batch
         }
 
     def _get_batch_stock_info(self, ts_codes: list) -> dict:

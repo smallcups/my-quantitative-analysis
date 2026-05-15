@@ -107,10 +107,10 @@
                 </div>
                 <div class="card-body">
                     <div class="mb-3">
-                        <label for="selectedModel" class="form-label">Select Model</label>
-                        <select class="form-select" id="selectedModel">
-                            <option value="">Select Model</option>
+                        <label for="selectedModel" class="form-label">Select Models (Ctrl+Click for multi)</label>
+                        <select class="form-select" id="selectedModel" multiple size="4">
                         </select>
+                        <small class="text-muted">Hybrid 模式下可同时选因子和模型</small>
                     </div>
                 </div>
             </div>
@@ -133,6 +133,7 @@
                             <option value="rank_ic" selected>自动 IC 权重（推荐）</option>
                             <option value="equal_weight">等权重</option>
                             <option value="factor_weight">手动权重</option>
+                            <option value="hybrid">混合（因子 + ML）</option>
                         </select>
                     </div>
                     <div id="autoWeightPreview" class="mb-3">
@@ -149,6 +150,53 @@
                             <small>0%</small>
                             <small id="factorWeightValue">30%</small>
                             <small>100%</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 混合控制（仅 hybrid 模式显示） -->
+    <div class="row mb-4" id="hybridControls" style="display:none;">
+        <div class="col-12">
+            <div class="card border-info">
+                <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Hybrid: Factor + Model</h5>
+                    <small id="hybridStatus">自动分析中...</small>
+                </div>
+                <div class="card-body py-2">
+                    <div class="row">
+                        <div class="col-md-5 border-end">
+                            <div class="d-flex align-items-center mb-1">
+                                <span class="badge bg-primary me-2">Factor</span>
+                                <span id="hybridFactorCount" class="small">-</span>
+                            </div>
+                            <div id="hybridFactorBars" style="max-height:150px;overflow-y:auto;"></div>
+                        </div>
+                        <div class="col-md-5">
+                            <div class="d-flex align-items-center mb-1">
+                                <span class="badge bg-success me-2">Model</span>
+                                <span id="hybridModelCount" class="small">-</span>
+                            </div>
+                            <div id="hybridModelList" style="max-height:150px;overflow-y:auto;"></div>
+                        </div>
+                        <div class="col-md-2 border-start">
+                            <div class="text-center">
+                                <div class="small text-muted mb-1">Blend</div>
+                                <div class="form-check mb-2">
+                                    <input class="form-check-input" type="checkbox" id="autoBlendWeight" checked>
+                                    <label class="form-check-label small" for="autoBlendWeight">自动</label>
+                                </div>
+                                <div id="manualBlendSection" style="display:none;">
+                                    <div class="d-flex align-items-center mb-1">
+                                        <span class="badge bg-primary" id="blendWeightValue">50</span>
+                                        <span class="mx-1 small">/</span>
+                                        <span class="badge bg-success" id="mlBlendWeightValue">50</span>
+                                    </div>
+                                    <input type="range" class="form-range form-range-sm" id="blendWeightSlider" min="10" max="90" value="50">
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -354,12 +402,15 @@ async function loadModels() {
             const models = response.data.models || [];
             
             const select = document.getElementById('selectedModel');
-            select.innerHTML = '<option value="">Select Model</option>';
-            
+            select.innerHTML = '';
+
             models.forEach(model => {
                 const option = document.createElement('option');
                 option.value = model.model_id;
-                option.textContent = `${model.model_name} (${model.model_type})`;
+                const trained = model.feature_importance && Object.keys(model.feature_importance).length > 0;
+                option.setAttribute('data-trained', trained ? '1' : '0');
+                const label = trained ? ' [T]' : '';
+                option.textContent = `${model.model_name} (${model.model_type})${label}`;
                 select.appendChild(option);
             });
         } else {
@@ -439,11 +490,137 @@ function getFactorTypeLabel(type) {
 }
 
 // 评分方法切换
-function onScoringMethodChange() {
+async function onScoringMethodChange() {
     const method = document.getElementById('scoringMethod').value;
     document.getElementById('manualWeightSection').style.display = (method === 'factor_weight') ? 'block' : 'none';
-    document.getElementById('autoWeightPreview').style.display = (method === 'rank_ic') ? 'block' : 'none';
+    document.getElementById('autoWeightPreview').style.display = (method === 'rank_ic' || method === 'hybrid') ? 'block' : 'none';
+    document.getElementById('hybridControls').style.display = (method === 'hybrid') ? 'flex' : 'none';
+
+    if (method === 'hybrid') {
+        document.getElementById('autoBlendWeight').checked = true;
+        document.getElementById('manualBlendSection').style.display = 'none';
+    }
 }
+
+// 混合权重控制事件
+document.getElementById('autoBlendWeight').addEventListener('change', function() {
+    document.getElementById('manualBlendSection').style.display = this.checked ? 'none' : 'block';
+});
+document.getElementById('blendWeightSlider').addEventListener('input', function() {
+    document.getElementById('blendWeightValue').textContent = this.value + '% Factor';
+    document.getElementById('mlBlendWeightValue').textContent = (100 - parseInt(this.value)) + '% ML';
+});
+
+let _hybridModelData = [];
+function updateHybridModelList() {
+    const container = document.getElementById('hybridModelList');
+    const data = _hybridModelData;
+    if (data.length === 0) {
+        container.innerHTML = '<small class="text-warning">等待分析...</small>';
+        document.getElementById('hybridModelCount').textContent = '-';
+        return;
+    }
+    const trained = data.filter(m => m.prediction_count > 0);
+    document.getElementById('hybridModelCount').textContent = trained.length + '/' + data.length + ' models';
+    container.innerHTML = data.map(m => {
+        const hasPred = m.prediction_count > 0;
+        return '<div class="d-flex align-items-center mb-1" style="font-size:0.78rem">' +
+            '<code style="min-width:35px">' + m.model_id + '</code>' +
+            '<span class="badge bg-' + (hasPred ? 'success' : 'secondary') + ' ms-1" style="font-size:0.65rem">' +
+            (hasPred ? m.prediction_count + ' preds' : 'no preds') + '</span>' +
+            '<small class="text-muted ms-1">' + m.model_type + '</small>' +
+            '</div>';
+    }).join('');
+}
+
+function updateHybridStatus() {
+    const sel = document.getElementById('selectedModel');
+    const nf = Object.keys(cachedWeights).length;
+    const nm = sel.selectedOptions.length;
+    document.getElementById('hybridStatus').textContent =
+        'Auto: ' + nf + ' factors + ' + nm + ' models';
+}
+
+// 在 calcAutoWeights 完成后同步更新因子条
+const _origCalcAutoWeights = calcAutoWeights;
+calcAutoWeights = async function() {
+    const isHybrid = document.getElementById('scoringMethod').value === 'hybrid';
+    if (isHybrid) {
+        // hybrid 模式：调专属接口，一次拿因子+模型+blend
+        const btn = document.getElementById('calcWeightBtn');
+        const preview = document.getElementById('weightPreview');
+        const note = document.getElementById('weightPreviewNote');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>分析中...';
+        const endDate = document.getElementById('endDate').value || new Date().toISOString().slice(0,10);
+        const startDate = document.getElementById('startDate').value || null;
+        try {
+            const resp = await axios.post('/api/ml-factor/hybrid/auto-config', {
+                evaluation_date: endDate,
+                start_date: startDate,
+                forward_period: 5, ic_ir_threshold: 0.1, max_correlation: 0.7,
+                min_factors: 2, max_factors: 8
+            });
+            if (!resp.data.success) {
+                preview.innerHTML = '<span class="text-danger">' + (resp.data.error || 'failed') + '</span>';
+                return;
+            }
+            const d = resp.data;
+            _hybridModelData = d.models || [];
+            cachedWeights = d.factor_weights || {};
+            // 因子条
+            preview.innerHTML = '';
+            preview.style.display = 'block';
+            let html = '';
+            const maxW = Math.max(...Object.values(cachedWeights), 0.01);
+            for (const [fid, w] of Object.entries(cachedWeights)) {
+                const pct = (w * 100).toFixed(1);
+                html += '<div class="d-flex align-items-center mb-1" style="font-size:0.85rem">' +
+                    '<code style="min-width:120px">' + fid + '</code>' +
+                    '<div class="flex-grow-1 mx-2"><div style="height:12px;background:linear-gradient(90deg,#198754,#0dcaf0);width:' + (w/maxW*100).toFixed(0) + '%;border-radius:3px"></div></div>' +
+                    '<strong style="min-width:45px;text-align:right">' + pct + '%</strong></div>';
+            }
+            html += '<div class="small text-muted mt-1">' + Object.keys(cachedWeights).length + ' factors</div>';
+            preview.innerHTML = html;
+            note.innerHTML = '<i class="fas fa-info-circle me-1"></i>Hybrid: ' + (d.blend_weight*100).toFixed(0) + '% factor / ' + ((1-d.blend_weight)*100).toFixed(0) + '% ML | ' + d.trained_model_count + ' models with predictions';
+            note.style.display = 'block';
+            // 自动勾选因子
+            const cbs = document.querySelectorAll('#factorSelection input[type="checkbox"]');
+            cbs.forEach(cb => { cb.checked = Object.keys(cachedWeights).includes(cb.value); });
+            // 自动选模型
+            const modelSelect = document.getElementById('selectedModel');
+            const modelIds = new Set((d.models || []).map(m => m.model_id));
+            for (let i = 0; i < modelSelect.options.length; i++) {
+                modelSelect.options[i].selected = modelIds.has(modelSelect.options[i].value);
+            }
+            // 更新 hybrid 面板
+            const bars = document.getElementById('hybridFactorBars');
+            document.getElementById('hybridFactorCount').textContent = Object.keys(cachedWeights).length + ' factors';
+            const entries = Object.entries(cachedWeights);
+            bars.innerHTML = entries.map(([fid, w]) => {
+                const pct = (w * 100).toFixed(1);
+                return '<div class="d-flex align-items-center mb-1" style="font-size:0.8rem">' +
+                    '<code style="min-width:100px">' + fid + '</code>' +
+                    '<div class="flex-grow-1 mx-1"><div style="height:10px;background:linear-gradient(90deg,#0d6efd,#0dcaf0);width:' + (w/maxW*100).toFixed(0) + '%;border-radius:3px"></div></div>' +
+                    '<strong style="min-width:40px;text-align:right;font-size:0.75rem">' + pct + '%</strong></div>';
+            }).join('');
+            updateHybridModelList();
+            document.getElementById('hybridStatus').textContent = 'Auto: ' + Object.keys(cachedWeights).length + ' factors + ' + (d.trained_model_count || 0) + ' models';
+        } catch (err) {
+            preview.innerHTML = '<span class="text-danger">' + (err.response?.data?.error || err.message) + '</span>';
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-calculator me-1"></i>计算最优权重';
+        }
+    } else {
+        await _origCalcAutoWeights();
+    }
+    // 更新 hybrid 面板因子条（非hybrid模式下不显示）
+    const bars2 = document.getElementById('hybridFactorBars');
+    if (bars2 && !isHybrid && bars2.innerHTML === '') {
+        // 不处理
+    }
+};
 
 // 计算最优权重
 let cachedWeights = {};
@@ -523,19 +700,30 @@ async function startBacktest() {
     try {
         const scoringMethod = document.getElementById('scoringMethod').value;
         // 构造策略配置
+        const isHybrid = scoringMethod === 'hybrid';
+        const hasModels = config.model_ids && config.model_ids.length > 0;
+        const hasFactors = config.selected_factors && config.selected_factors.length > 0;
+
+        let selectionMethod = 'factor_based';
+        if (isHybrid && hasModels && hasFactors) {
+            selectionMethod = 'hybrid';
+        } else if (hasModels) {
+            selectionMethod = 'ml_based';
+        }
+
         const strategyConfig = {
-            selection_method: config.model_id ? 'ml_based' : 'factor_based',
-            model_ids: config.model_id ? [config.model_id] : [],
+            selection_method: selectionMethod,
+            model_ids: config.model_ids,
             factor_list: config.selected_factors,
             scoring_method: scoringMethod,
-            factor_weights: scoringMethod === 'factor_weight' ? {} : {},
+            factor_weights: {},
+            blend_weight: isHybrid ? (document.getElementById('autoBlendWeight').checked
+                ? null
+                : parseInt(document.getElementById('blendWeightSlider').value) / 100) : undefined,
             top_n: config.stock_count,
             optimization: {
-                method: 'equal_weight',  // 简化处理
-                constraints: {
-                    max_weight: 0.1,
-                    min_weight: 0.01
-                }
+                method: 'equal_weight',
+                constraints: { max_weight: 0.1, min_weight: 0.01 }
             },
             transaction_cost: config.commission_rate + config.slippage_rate
         };
@@ -591,6 +779,9 @@ function getBacktestConfig() {
     const selectedFactors = Array.from(document.querySelectorAll('#factorSelection input:checked'))
         .map(input => input.value);
     
+    const selectedModels = Array.from(document.getElementById('selectedModel').selectedOptions)
+        .map(o => o.value);
+
     return {
         start_date: document.getElementById('startDate').value,
         end_date: document.getElementById('endDate').value,
@@ -600,7 +791,7 @@ function getBacktestConfig() {
         commission_rate: parseFloat(document.getElementById('commissionRate').value) / 100,
         slippage_rate: parseFloat(document.getElementById('slippageRate').value) / 100,
         benchmark_index: document.getElementById('benchmarkIndex').value,
-        model_id: document.getElementById('selectedModel').value,
+        model_ids: selectedModels,
         selected_factors: selectedFactors
     };
 }
@@ -622,7 +813,12 @@ function validateConfig(config) {
         return false;
     }
     
-    if (!config.model_id && config.selected_factors.length === 0) {
+    const isHybrid = document.getElementById('scoringMethod').value === 'hybrid';
+    if (isHybrid && (!config.model_ids || config.model_ids.length === 0 || config.selected_factors.length === 0)) {
+        showAlert('Hybrid mode requires both models and factors', 'warning');
+        return false;
+    }
+    if (!isHybrid && !config.model_ids.length && config.selected_factors.length === 0) {
         showAlert('Please select at least one model or factor', 'warning');
         return false;
     }

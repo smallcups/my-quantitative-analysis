@@ -24,6 +24,8 @@ class FactorOptimizer:
         self._price_cache = None
         self._price_cache_start_dt = None
         self._price_cache_end_dt = None
+        self._eff_cache = {}  # (forward_period, evaluation_date, start_date) → records
+        self._result_cache = {}  # (params) → full result dict
 
     # ============================================================
     # 行情数据预加载
@@ -56,6 +58,9 @@ class FactorOptimizer:
         self._price_cache['trade_date'] = pd.to_datetime(self._price_cache['trade_date'])
         self._price_cache_start_dt = start_dt
         self._price_cache_end_dt = end_dt
+        self._corr_last_date = None
+        self._corr_cache = {}
+        self._result_cache = {}
         logger.info(f'Price cache warmed: {len(self._price_cache)} rows, {start_dt} to {end_dt}')
 
     def _precompute_forward_returns(self, forward_period: int):
@@ -285,11 +290,28 @@ class FactorOptimizer:
             if forward_returns is None or forward_returns.empty:
                 continue
 
+            # 采样交易日：取 FactorValues 与 forward_returns 日期交集，每隔 step 天取 1 个
+            step = getattr(self, 'ic_sample_step', 5)
+            sampled_dates = None
+            if step > 1 and forward_returns is not None and not forward_returns.empty:
+                fv_dates = db.session.query(FactorValues.trade_date).filter(
+                    FactorValues.factor_id.in_(factor_ids),
+                    FactorValues.trade_date >= pd.to_datetime(start_date).date(),
+                    FactorValues.trade_date <= pd.to_datetime(end_date).date()
+                ).distinct().all()
+                fv_date_set = {str(d[0]) for d in fv_dates}
+                fwd_dates = sorted(forward_returns['trade_date'].unique())
+                effective_dates = sorted([d for d in fwd_dates if str(d)[:10] in fv_date_set])
+                sampled_dates = set(effective_dates[::step]) if effective_dates else None
+
             factor_results = self._batch_all_factors_ic(
-                factor_ids, start_date, end_date, period, forward_returns
+                factor_ids, start_date, end_date, period, forward_returns, sampled_dates
             )
             for stats in factor_results:
                 self._persist_effectiveness(stats)
+            # 新数据入库后清缓存，下次查询走 DB 拿最新
+            cache_key = (period, end_date, start_date) if start_date else (period, end_date)
+            self._eff_cache.pop(cache_key, None)
 
             results_by_period[str(period)] = {
                 'factors': factor_results,
@@ -310,20 +332,24 @@ class FactorOptimizer:
         start_date: str,
         end_date: str,
         forward_period: int,
-        forward_returns: pd.DataFrame
+        forward_returns: pd.DataFrame,
+        sampled_dates: set = None
     ) -> list:
         """一次 SQL 查询所有因子，内存中按 factor_id 拆分后逐因子 merge + groupby。"""
         start_dt = pd.to_datetime(start_date)
         end_dt = pd.to_datetime(end_date)
 
-        # 一次查询：只选 3 列 + factor_id
+        # 一次查询：只选 3 列 + factor_id；采样日期提前过滤，减少 SQL 传输量
         cols = [FactorValues.factor_id, FactorValues.ts_code,
                 FactorValues.trade_date, FactorValues.factor_value]
-        fv_query = db.session.query(*cols).filter(
+        filters = [
             FactorValues.factor_id.in_(factor_ids),
             FactorValues.trade_date >= start_dt,
             FactorValues.trade_date <= end_dt
-        )
+        ]
+        if sampled_dates:
+            filters.append(FactorValues.trade_date.in_(sampled_dates))
+        fv_query = db.session.query(*cols).filter(*filters)
         all_fv = pd.read_sql(fv_query.statement, db.engine)
         if all_fv.empty:
             return [{'factor_id': fid, 'error': 'No factor values', 'success': False}
@@ -367,6 +393,7 @@ class FactorOptimizer:
                 'factor_id': fid,
                 'forward_period': forward_period,
                 'evaluation_date': end_date,
+                'start_date': start_date,
                 'ic_mean': float(np.mean(ic_array)),
                 'ic_std': float(np.std(ic_array, ddof=1)),
                 'ic_ir': float(np.mean(ic_array) / np.std(ic_array, ddof=1)) if np.std(ic_array, ddof=1) > 0 else 0.0,
@@ -412,7 +439,8 @@ class FactorOptimizer:
             record.factor_direction = stats['factor_direction']
             record.extra_info = {
                 'ic_series': stats.get('ic_series', []),
-                'dates': stats.get('dates', [])
+                'dates': stats.get('dates', []),
+                'start_date': stats.get('start_date', '')
             }
             record.updated_at = datetime.utcnow()
 
@@ -509,23 +537,34 @@ class FactorOptimizer:
             return {'error': str(e)}
 
     def _compute_factor_correlation_matrix(self, factor_ids: List[str]) -> pd.DataFrame:
-        """计算因子间截面相关性矩阵。"""
+        """计算因子间截面相关性矩阵（带缓存）。"""
         try:
-            latest_date_query = db.session.query(FactorValues.trade_date).filter(
-                FactorValues.factor_id.in_(factor_ids)
-            ).order_by(FactorValues.trade_date.desc()).first()
+            if not hasattr(self, '_corr_cache'):
+                self._corr_cache = {}
+            if not hasattr(self, '_corr_last_date'):
+                self._corr_last_date = None
 
-            if not latest_date_query:
-                return pd.DataFrame(index=factor_ids, columns=factor_ids).fillna(0)
+            fids_sorted = tuple(sorted(factor_ids))
 
-            latest_date = latest_date_query[0]
+            # 查最新日期（缓存）
+            if self._corr_last_date is None:
+                row = db.session.query(FactorValues.trade_date).filter(
+                    FactorValues.factor_id.in_(factor_ids)
+                ).order_by(FactorValues.trade_date.desc()).first()
+                if not row:
+                    return pd.DataFrame(index=factor_ids, columns=factor_ids).fillna(0)
+                self._corr_last_date = row[0]
+
+            latest_date = self._corr_last_date
+            full_key = (str(latest_date), fids_sorted)
+            if full_key in self._corr_cache:
+                return self._corr_cache[full_key]
 
             query = FactorValues.query.filter(
                 FactorValues.trade_date == latest_date,
                 FactorValues.factor_id.in_(factor_ids)
             )
             data = pd.read_sql(query.statement, db.engine)
-
             if data.empty:
                 return pd.DataFrame(index=factor_ids, columns=factor_ids).fillna(0)
 
@@ -537,7 +576,9 @@ class FactorOptimizer:
             if pivot.empty or pivot.shape[1] < 2:
                 return pd.DataFrame(index=factor_ids, columns=factor_ids).fillna(0)
 
-            return pivot.corr(method='spearman')
+            corr = pivot.corr(method='spearman')
+            self._corr_cache[full_key] = corr
+            return corr
 
         except Exception as e:
             logger.error(f'compute correlation matrix failed: {e}')
@@ -618,12 +659,23 @@ class FactorOptimizer:
             dt = pd.to_datetime(evaluation_date)
             start_date = (dt - timedelta(days=252)).strftime('%Y-%m-%d')
 
-        latest_records = self._get_latest_effectiveness(forward_period, evaluation_date)
+        result_key = (evaluation_date, start_date, forward_period, method,
+                      ic_ir_threshold, max_correlation, min_factors, max_factors)
+        if result_key in self._result_cache:
+            cached = dict(self._result_cache[result_key])
+            latest_data_date = db.session.query(db.func.max(FactorValues.trade_date)).scalar()
+            cached['data_freshness'] = str(latest_data_date) if latest_data_date else None
+            return cached
+
+        latest_records = self._get_latest_effectiveness(forward_period, evaluation_date, start_date)
 
         needs_recompute = False
         if latest_records:
             cached_dates = set(r.get('evaluation_date') for r in latest_records)
-            if evaluation_date not in cached_dates or len(cached_dates) != 1:
+            cached_starts = set(r.get('start_date') for r in latest_records)
+            if (evaluation_date not in cached_dates
+                    or len(cached_dates) != 1
+                    or start_date not in cached_starts):
                 needs_recompute = True
 
         if not latest_records or needs_recompute:
@@ -638,7 +690,7 @@ class FactorOptimizer:
                     ]
                     break
             if not latest_records:
-                latest_records = self._get_latest_effectiveness(forward_period, evaluation_date)
+                latest_records = self._get_latest_effectiveness(forward_period, evaluation_date, start_date)
 
         if not latest_records:
             return {'error': 'No effectiveness data available', 'weights': {}}
@@ -656,11 +708,14 @@ class FactorOptimizer:
 
         weights = self._compute_weights(selection_result['selected_factors'], method=method)
 
-        return {
+        latest_data_date = db.session.query(db.func.max(FactorValues.trade_date)).scalar()
+
+        result = {
             'evaluation_date': evaluation_date,
             'start_date': start_date,
             'forward_period': forward_period,
             'weight_method': method,
+            'data_freshness': str(latest_data_date) if latest_data_date else None,
             'weights': weights,
             'selected_factors': selection_result['selection_summary'],
             'selection_metadata': {
@@ -668,9 +723,14 @@ class FactorOptimizer:
                 if k not in ('selected_factors', 'weights', 'selection_summary')
             }
         }
+        self._result_cache[result_key] = result
+        return dict(result)
 
-    def _get_latest_effectiveness(self, forward_period: int = 5, evaluation_date: str = None) -> List[Dict[str, Any]]:
+    def _get_latest_effectiveness(self, forward_period: int = 5, evaluation_date: str = None, start_date: str = None) -> List[Dict[str, Any]]:
         """获取每个因子在指定日期之前最新一期有效性评估数据。"""
+        cache_key = (forward_period, evaluation_date, start_date) if start_date else (forward_period, evaluation_date)
+        if cache_key in self._eff_cache:
+            return self._eff_cache[cache_key]
         try:
             filters = [FactorEffectiveness.forward_period == forward_period]
             if evaluation_date:
@@ -691,10 +751,14 @@ class FactorOptimizer:
             )
 
             records = query.all()
-            return [
-                {
+            self._eff_cache[cache_key] = []  # placeholder
+            result = []
+            for r in records:
+                extra = r.extra_info or {}
+                result.append({
                     'factor_id': r.factor_id,
                     'evaluation_date': str(r.evaluation_date),
+                    'start_date': extra.get('start_date') or (extra.get('dates', [None])[0] if extra.get('dates') else None),
                     'forward_period': r.forward_period,
                     'ic_mean': float(r.ic_mean) if r.ic_mean else 0.0,
                     'ic_std': float(r.ic_std) if r.ic_std else 0.0,
@@ -704,9 +768,9 @@ class FactorOptimizer:
                     'sample_count': r.sample_count or 0,
                     'factor_direction': r.factor_direction or 'unknown',
                     'success': True
-                }
-                for r in records
-            ]
+                })
+            self._eff_cache[cache_key] = result
+            return result
         except Exception as e:
             logger.error(f'_get_latest_effectiveness failed: {e}')
             return []

@@ -318,6 +318,38 @@ class StockScoringEngine:
             logger.error(f"获取股票信息失败: {e}")
             return {}
     
+    def _ensemble_ml_predictions(self, trade_date: str, model_ids: List[str],
+                                 ensemble_method: str = 'average',
+                                 predictions_batch: pd.DataFrame = None) -> pd.DataFrame:
+        """获取全量 ML 集成预测（不截断 top_n），供 hybrid 复用。"""
+        all_predictions = []
+
+        if predictions_batch is not None and not predictions_batch.empty:
+            batch_date = pd.Timestamp(trade_date)
+            batch = predictions_batch[predictions_batch['trade_date'] == batch_date]
+            for model_id in model_ids:
+                pred_data = batch[batch['model_id'] == model_id]
+                if not pred_data.empty:
+                    pred_data = pred_data.copy()
+                    pred_data['model_id'] = model_id
+                    all_predictions.append(pred_data)
+        else:
+            for model_id in model_ids:
+                pred_query = MLPredictions.query.filter(
+                    MLPredictions.model_id == model_id,
+                    MLPredictions.trade_date == trade_date
+                ).order_by(MLPredictions.rank_score)
+                pred_data = pd.read_sql(pred_query.statement, db.engine)
+                if not pred_data.empty:
+                    pred_data['model_id'] = model_id
+                    all_predictions.append(pred_data)
+
+        if not all_predictions:
+            return pd.DataFrame()
+
+        combined = pd.concat(all_predictions, ignore_index=True)
+        return self._ensemble_predictions(combined, ensemble_method)
+
     def ml_based_selection(self, trade_date: str, model_ids: List[str],
                           top_n: int = 50, ensemble_method: str = 'average',
                           predictions_batch: pd.DataFrame = None) -> List[Dict[str, Any]]:
@@ -327,52 +359,22 @@ class StockScoringEngine:
                 logger.warning("未提供模型ID")
                 return []
 
-            all_predictions = []
-
-            if predictions_batch is not None and not predictions_batch.empty:
-                # 批量缓存路径：从预加载的 DataFrame 中筛选
-                batch_date = pd.Timestamp(trade_date)
-                batch = predictions_batch[predictions_batch['trade_date'] == batch_date]
-                for model_id in model_ids:
-                    pred_data = batch[batch['model_id'] == model_id]
-                    if not pred_data.empty:
-                        pred_data = pred_data.copy()
-                        pred_data['model_id'] = model_id
-                        all_predictions.append(pred_data)
-            else:
-                # 逐日查询路径（兜底）
-                for model_id in model_ids:
-                    pred_query = MLPredictions.query.filter(
-                        MLPredictions.model_id == model_id,
-                        MLPredictions.trade_date == trade_date
-                    ).order_by(MLPredictions.rank_score)
-                    pred_data = pd.read_sql(pred_query.statement, db.engine)
-                    if not pred_data.empty:
-                        pred_data['model_id'] = model_id
-                        all_predictions.append(pred_data)
-            
-            if not all_predictions:
+            ensemble_scores = self._ensemble_ml_predictions(
+                trade_date, model_ids, ensemble_method, predictions_batch
+            )
+            if ensemble_scores.empty:
                 logger.warning(f"未找到预测数据: {trade_date}")
                 return []
-            
-            # 合并所有预测结果
-            combined_predictions = pd.concat(all_predictions, ignore_index=True)
-            
-            # 集成预测结果
-            ensemble_scores = self._ensemble_predictions(combined_predictions, ensemble_method)
-            
+
             # 排名和选择
             ensemble_scores['rank'] = ensemble_scores['ensemble_score'].rank(ascending=False, method='dense').astype(int)
             ensemble_scores['percentile_rank'] = ensemble_scores['ensemble_score'].rank(pct=True) * 100
-            
-            # 选择前N只股票
+
             top_stocks = ensemble_scores.head(top_n)
-            
-            # 获取股票基本信息
+
             ts_codes = top_stocks['ts_code'].tolist()
             stock_info = self._get_stock_info(ts_codes)
-            
-            # 构建结果
+
             result = []
             for _, row in top_stocks.iterrows():
                 stock_data = {
@@ -382,16 +384,13 @@ class StockScoringEngine:
                     'percentile_rank': float(row['percentile_rank']),
                     'model_count': int(row['model_count'])
                 }
-                
-                # 添加股票基本信息
                 if row['ts_code'] in stock_info:
                     stock_data.update(stock_info[row['ts_code']])
-                
                 result.append(stock_data)
-            
+
             logger.info(f"ML选股完成: 使用 {len(model_ids)} 个模型，选出 {len(result)} 只股票")
             return result
-            
+
         except Exception as e:
             logger.error(f"ML选股失败: {trade_date}, 错误: {e}")
             return []
@@ -451,6 +450,142 @@ class StockScoringEngine:
             logger.error(f"集成预测结果失败: {method}, 错误: {e}")
             return pd.DataFrame()
     
+    @staticmethod
+    def _normalize_scores(scores: pd.Series) -> pd.Series:
+        """Min-max 归一化到 [0, 1]。"""
+        if scores.empty or scores.min() == scores.max():
+            return pd.Series(0.5, index=scores.index)
+        return (scores - scores.min()) / (scores.max() - scores.min())
+
+    def _determine_optimal_blend_weight(self, trade_date: str,
+                                         factor_list: list,
+                                         model_ids: list,
+                                         forward_period: int = 5) -> float:
+        """基于 IC_IR 和 feature_importance 自动确定因子/模型混合权重。"""
+        try:
+            from app.services.factor_optimizer import FactorOptimizer
+            from app.models import MLModelDefinition
+
+            optimizer = FactorOptimizer()
+            effectiveness = optimizer._get_latest_effectiveness(
+                forward_period=forward_period, evaluation_date=trade_date
+            )
+            factor_ic_irs = [
+                abs(f['ic_ir']) for f in effectiveness
+                if f.get('success') and f['factor_id'] in factor_list
+            ]
+            avg_factor_q = float(np.mean(factor_ic_irs)) if factor_ic_irs else 0.2
+
+            model_qs = []
+            for mid in model_ids:
+                mdef = MLModelDefinition.query.filter_by(model_id=mid).first()
+                if mdef and mdef.feature_importance:
+                    vals = [abs(v) for v in mdef.feature_importance.values()]
+                    model_qs.append(float(np.mean(vals)))
+                elif mdef:
+                    # 无 feature_importance 时用预测数量作为质量代理
+                    pred_count = MLPredictions.query.filter_by(model_id=mid).count()
+                    if pred_count > 0:
+                        model_qs.append(min(pred_count / 50000.0, 0.5))
+            avg_ml_q = float(np.mean(model_qs)) if model_qs else 0.2
+
+            def _q(x):
+                return 1.0 / (1.0 + np.exp(-5.0 * (x - 0.2)))
+
+            fs = _q(avg_factor_q)
+            ms = _q(avg_ml_q)
+            total = fs + ms
+            if total <= 0:
+                return 0.5
+            return float(np.clip(fs / total, 0.2, 0.8))
+        except Exception:
+            return 0.5
+
+    def hybrid_selection(self, trade_date: str,
+                         factor_list: list = None,
+                         model_ids: list = None,
+                         top_n: int = 50,
+                         blend_weight: float = None,
+                         factor_scoring_method: str = 'rank_ic',
+                         factor_scoring_weights: dict = None,
+                         ensemble_method: str = 'average',
+                         predictions_batch: pd.DataFrame = None,
+                         factor_values_batch: pd.DataFrame = None) -> list:
+        """混合因子 + ML 选股：并行跑两路打分，归一化后按权重融合排名。"""
+        factor_list = factor_list or []
+        model_ids = model_ids or []
+
+        # 因子打分
+        factor_scores = self.calculate_factor_scores(
+            trade_date, factor_list, factor_values_batch=factor_values_batch
+        )
+        if factor_scores.empty:
+            return self.ml_based_selection(trade_date, model_ids, top_n,
+                                           ensemble_method, predictions_batch=predictions_batch)
+
+        composite = self.calculate_composite_score(
+            factor_scores, factor_scoring_weights or {}, factor_scoring_method
+        )
+        if composite.empty:
+            return self.ml_based_selection(trade_date, model_ids, top_n,
+                                           ensemble_method, predictions_batch=predictions_batch)
+
+        # ML 预测
+        ml_ensemble = self._ensemble_ml_predictions(
+            trade_date, model_ids, ensemble_method, predictions_batch
+        )
+        if ml_ensemble.empty:
+            return self.rank_stocks(composite, top_n)
+
+        # 共有股票
+        factor_map = dict(zip(composite['ts_code'], composite['composite_score']))
+        ml_map = dict(zip(ml_ensemble['ts_code'], ml_ensemble['ensemble_score']))
+        common = sorted(set(factor_map) & set(ml_map))
+        if not common:
+            return self.rank_stocks(composite, top_n)
+
+        blend_df = pd.DataFrame({
+            'ts_code': common,
+            'factor_score': [factor_map[c] for c in common],
+            'ml_score': [ml_map[c] for c in common],
+        })
+
+        if blend_weight is None:
+            blend_weight = self._determine_optimal_blend_weight(
+                trade_date, factor_list, model_ids
+            )
+
+        blend_df['factor_norm'] = self._normalize_scores(blend_df['factor_score'])
+        blend_df['ml_norm'] = self._normalize_scores(blend_df['ml_score'])
+        blend_df['hybrid_score'] = (
+            blend_weight * blend_df['factor_norm'] +
+            (1.0 - blend_weight) * blend_df['ml_norm']
+        )
+
+        blend_df = blend_df.sort_values('hybrid_score', ascending=False)
+        blend_df['rank'] = range(1, len(blend_df) + 1)
+        blend_df['percentile_rank'] = blend_df['hybrid_score'].rank(pct=True) * 100
+        top = blend_df.head(top_n)
+
+        stock_info = self._get_stock_info(top['ts_code'].tolist())
+        result = []
+        for _, row in top.iterrows():
+            entry = {
+                'ts_code': row['ts_code'],
+                'composite_score': float(row['hybrid_score']),
+                'factor_score': float(row['factor_score']),
+                'ml_score': float(row['ml_score']),
+                'blend_weight': blend_weight,
+                'rank': int(row['rank']),
+                'percentile_rank': float(row['percentile_rank']),
+            }
+            if row['ts_code'] in stock_info:
+                entry.update(stock_info[row['ts_code']])
+            result.append(entry)
+
+        logger.info(f"混合选股: blend={blend_weight:.3f}, {len(result)} stocks")
+        return result
+
     def factor_contribution_analysis(self, ts_code: str, trade_date: str,
                                    factor_list: List[str] = None) -> Dict[str, Any]:
         """因子贡献度分析"""

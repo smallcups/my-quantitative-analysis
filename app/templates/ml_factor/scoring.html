@@ -123,14 +123,19 @@ async function calculateScoring() {
                 return;
             }
         } else {
-            // 混合方法 - 集成选股
-            response = await axios.post('/api/ml-factor/portfolio/integrated-selection', {
+            // 混合方法 - 因子 + ML
+            const modelsRes = await axios.get('/api/ml-factor/models/list');
+            const modelIds = (modelsRes.data.success && modelsRes.data.models.length)
+                ? modelsRes.data.models.map(m => m.model_id).slice(0, 3) : [];
+
+            response = await axios.post('/api/ml-factor/scoring/hybrid', {
                 trade_date: tradeDate,
-                selection_method: 'factor_based',
-                factor_list: ['momentum_5d', 'money_flow_strength', 'momentum_20d'],
-                weights: {'momentum_5d': 0.4, 'money_flow_strength': 0.3, 'momentum_20d': 0.3},
+                factor_list: ['momentum_5d', 'momentum_20d', 'volatility_20d', 'volume_ratio_20d'],
+                model_ids: modelIds,
                 top_n: topN,
-                optimization_method: 'equal_weight'
+                blend_weight: null,
+                factor_scoring_method: 'rank_ic',
+                ensemble_method: 'average'
             });
         }
         
@@ -142,19 +147,16 @@ async function calculateScoring() {
             } else if (scoringMethod === 'ml_based') {
                 results = response.data.top_stocks || [];
             } else {
-                // 混合方法
-                const stockSelection = response.data.stock_selection || {};
-                const weights = response.data.portfolio_optimization?.weights || {};
-                results = Object.keys(weights).map((ts_code, index) => ({
-                    ts_code: ts_code,
-                    name: ts_code, // 简化显示
-                    composite_score: weights[ts_code],
-                    rank: index + 1,
-                    industry: 'Unknown',
-                    pe_ratio: null,
-                    pb_ratio: null,
-                    roe: null
-                }));
+                results = response.data.top_stocks || [];
+            }
+            // blend_weight 显示
+            if (response.data.blend_weight !== undefined) {
+                const blendNote = document.getElementById('blendNote');
+                if (blendNote) {
+                    blendNote.textContent = `Blend weight: ${(response.data.blend_weight * 100).toFixed(0)}% factor / ${((1 - response.data.blend_weight) * 100).toFixed(0)}% ML`;
+                    blendNote.style.display = 'block';
+                }
+            }
             }
             renderScoringResults(results);
         } else {
