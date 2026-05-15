@@ -512,6 +512,8 @@ document.getElementById('blendWeightSlider').addEventListener('input', function(
 });
 
 let _hybridModelData = [];
+let _hybridModelTotal = 0;
+let _hybridModelSelected = 0;
 function updateHybridModelList() {
     const container = document.getElementById('hybridModelList');
     const data = _hybridModelData;
@@ -520,15 +522,24 @@ function updateHybridModelList() {
         document.getElementById('hybridModelCount').textContent = '-';
         return;
     }
-    const trained = data.filter(m => m.prediction_count > 0);
-    document.getElementById('hybridModelCount').textContent = trained.length + '/' + data.length + ' models';
+    document.getElementById('hybridModelCount').textContent =
+        _hybridModelSelected + ' selected / ' + _hybridModelTotal + ' total';
+    const maxW = Math.max(...data.map(m => m.weight || 0), 0.01);
     container.innerHTML = data.map(m => {
-        const hasPred = m.prediction_count > 0;
-        return '<div class="d-flex align-items-center mb-1" style="font-size:0.78rem">' +
-            '<code style="min-width:35px">' + m.model_id + '</code>' +
-            '<span class="badge bg-' + (hasPred ? 'success' : 'secondary') + ' ms-1" style="font-size:0.65rem">' +
-            (hasPred ? m.prediction_count + ' preds' : 'no preds') + '</span>' +
-            '<small class="text-muted ms-1">' + m.model_type + '</small>' +
+        const w = m.weight || 0;
+        const pct = (w * 100).toFixed(1);
+        const barW = maxW > 0 ? (w / maxW * 100).toFixed(0) : 0;
+        const barColor = w > 0.3 ? '#198754' : w > 0.1 ? '#6f42c1' : '#6c757d';
+        return '<div class="mb-1" style="font-size:0.78rem">' +
+            '<div class="d-flex align-items-center">' +
+            '<code style="min-width:30px">' + m.model_id + '</code>' +
+            '<small class="text-muted ms-1" style="min-width:55px">' + m.model_type + '</small>' +
+            '<span class="badge bg-secondary ms-1" style="font-size:0.6rem">' + m.prediction_count + '</span>' +
+            '<strong class="ms-auto" style="min-width:38px;text-align:right;font-size:0.72rem">' + pct + '%</strong>' +
+            '</div>' +
+            '<div style="height:6px;background:#e9ecef;border-radius:3px;margin-top:1px">' +
+            '<div style="height:6px;background:' + barColor + ';width:' + barW + '%;border-radius:3px"></div>' +
+            '</div>' +
             '</div>';
     }).join('');
 }
@@ -567,6 +578,8 @@ calcAutoWeights = async function() {
             }
             const d = resp.data;
             _hybridModelData = d.models || [];
+            _hybridModelTotal = d.model_count || 0;
+            _hybridModelSelected = d.selected_model_count || 0;
             cachedWeights = d.factor_weights || {};
             // 因子条
             preview.innerHTML = '';
@@ -605,7 +618,7 @@ calcAutoWeights = async function() {
                     '<strong style="min-width:40px;text-align:right;font-size:0.75rem">' + pct + '%</strong></div>';
             }).join('');
             updateHybridModelList();
-            document.getElementById('hybridStatus').textContent = 'Auto: ' + Object.keys(cachedWeights).length + ' factors + ' + (d.trained_model_count || 0) + ' models';
+            document.getElementById('hybridStatus').textContent = 'Auto: ' + Object.keys(cachedWeights).length + ' factors + ' + (d.selected_model_count || 0) + ' models';
         } catch (err) {
             preview.innerHTML = '<span class="text-danger">' + (err.response?.data?.error || err.message) + '</span>';
         } finally {

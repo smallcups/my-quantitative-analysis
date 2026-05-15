@@ -4,6 +4,7 @@ from loguru import logger
 import pandas as pd
 import numpy as np
 
+from app.extensions import db
 from app.services.factor_engine import FactorEngine
 from app.services.ml_models import MLModelManager
 from app.services.stock_scoring import StockScoringEngine
@@ -668,12 +669,14 @@ def hybrid_scoring():
 
 @ml_factor_bp.route('/hybrid/auto-config', methods=['POST'])
 def hybrid_auto_config():
-    """Hybrid 模式专属：一次返回因子权重 + 模型列表 + 预估 blend_weight"""
+    """Hybrid 模式专属：一次返回因子权重 + 精选模型列表 + 预估 blend_weight"""
     try:
         data = request.get_json() or {}
         evaluation_date = data.get('evaluation_date') or datetime.utcnow().strftime('%Y-%m-%d')
         start_date = data.get('start_date')
         forward_period = data.get('forward_period', 5)
+        max_models = data.get('max_models', 5)
+        max_model_correlation = data.get('max_model_correlation', 0.8)
 
         # 1. 因子侧：复用的 auto-weight 逻辑
         factor_result = get_factor_optimizer().get_optimized_weights(
@@ -687,35 +690,91 @@ def hybrid_auto_config():
             max_factors=data.get('max_factors', 8)
         )
 
-        # 2. 模型侧：查询所有模型 + 质量信息
+        if 'error' in factor_result:
+            return jsonify({
+                'success': False,
+                'error': '因子权重计算失败: ' + factor_result['error']
+            }), 500
+
+        selected_factor_ids = set(factor_result.get('weights', {}).keys())
+
+        # 2. 模型侧：一次查询获取所有模型 + 预测数量
         from app.models import MLModelDefinition, MLPredictions
-        models = MLModelDefinition.query.filter_by(is_active=True).all()
-        model_list = []
-        for m in models:
-            pred_count = MLPredictions.query.filter_by(model_id=m.model_id).count()
-            has_imp = bool(m.feature_importance and len(m.feature_importance) > 0)
-            model_list.append({
+        from sqlalchemy import func
+
+        pred_counts = dict(db.session.query(
+            MLPredictions.model_id,
+            func.count().label('cnt')
+        ).group_by(MLPredictions.model_id).all())
+
+        all_models = MLModelDefinition.query.filter_by(is_active=True).all()
+
+        # 3. 模型评分
+        def model_quality(m) -> float:
+            if m.feature_importance and len(m.feature_importance) > 0:
+                return float(np.mean([abs(v) for v in m.feature_importance.values()]))
+            cnt = pred_counts.get(m.model_id, 0)
+            if cnt > 0:
+                return min(cnt / 50000.0, 0.5)
+            return 0.0
+
+        candidates = []
+        for m in all_models:
+            pred_count = pred_counts.get(m.model_id, 0)
+            factor_list = m.factor_list or []
+            factor_overlap = len(set(factor_list) & selected_factor_ids)
+            quality = model_quality(m)
+
+            candidates.append({
                 'model_id': m.model_id,
                 'model_name': m.model_name,
                 'model_type': m.model_type,
+                'factor_list': factor_list,
                 'prediction_count': pred_count,
-                'has_feature_importance': has_imp,
-                'factor_list': m.factor_list or []
+                'has_feature_importance': bool(m.feature_importance and len(m.feature_importance) > 0),
+                'quality_score': round(quality, 6),
+                'factor_overlap': factor_overlap,
+                '_factor_set': frozenset(factor_list),
             })
 
-        # 3. 模型侧权重：按预测数量归一化（后续可改为 R² / feature_importance）
-        trained = [m for m in model_list if m['prediction_count'] > 0]
-        if trained:
-            total = sum(m['prediction_count'] for m in trained)
-            for m in trained:
-                m['weight'] = round(m['prediction_count'] / total, 6) if total > 0 else 0.0
-        for m in model_list:
-            if 'weight' not in m:
-                m['weight'] = 0.0
+        # 4. 筛选管线
+        # 4a. 必须有预测记录
+        candidates = [c for c in candidates if c['prediction_count'] > 0]
 
-        # 4. 预估 blend_weight
-        factor_ids = list(factor_result.get('weights', {}).keys())
-        model_ids = [m['model_id'] for m in trained]
+        # 4b. 必须与选中因子有交集（至少 1 个公共因子）
+        candidates = [c for c in candidates if c['factor_overlap'] > 0]
+
+        # 4c. 去冗余：相同 factor_set + model_type，只保留 quality 最高的
+        candidates.sort(key=lambda c: c['quality_score'], reverse=True)
+        seen = set()
+        deduped = []
+        for c in candidates:
+            sig = (c['_factor_set'], c['model_type'])
+            if sig not in seen:
+                seen.add(sig)
+                deduped.append(c)
+        candidates = deduped
+
+        # 4d. 按 quality_score 排序，取 top N
+        candidates.sort(key=lambda c: c['quality_score'], reverse=True)
+        selected_models = candidates[:max_models]
+
+        # 5. 模型权重：按 quality_score 归一化
+        total_q = sum(c['quality_score'] for c in selected_models)
+        if total_q > 0:
+            for c in selected_models:
+                c['weight'] = round(c['quality_score'] / total_q, 6)
+        else:
+            for c in selected_models:
+                c['weight'] = round(1.0 / len(selected_models), 6)
+
+        # 清理内部字段
+        for c in selected_models:
+            del c['_factor_set']
+
+        # 6. 预估 blend_weight
+        factor_ids = list(selected_factor_ids)
+        model_ids = [m['model_id'] for m in selected_models]
         blend_weight = 0.5
         if factor_ids and model_ids:
             blend_weight = get_scoring_engine()._determine_optimal_blend_weight(
@@ -729,12 +788,19 @@ def hybrid_auto_config():
             'data_freshness': factor_result.get('data_freshness'),
             'factors': factor_result.get('selected_factors', {}),
             'factor_weights': factor_result.get('weights', {}),
-            'models': model_list,
-            'model_weights': {m['model_id']: m['weight'] for m in model_list},
-            'model_count': len(model_list),
-            'trained_model_count': len(trained),
+            'models': selected_models,
+            'model_weights': {m['model_id']: m['weight'] for m in selected_models},
+            'model_count': len(all_models),
+            'selected_model_count': len(selected_models),
             'blend_weight': blend_weight,
-            'weight_method': 'ic_ir_weighted'
+            'weight_method': 'ic_ir_weighted',
+            'selection_params': {
+                'max_models': max_models,
+                'ic_ir_threshold': data.get('ic_ir_threshold', 0.1),
+                'max_correlation': data.get('max_correlation', 0.7),
+                'min_factors': data.get('min_factors', 2),
+                'max_factors': data.get('max_factors', 8),
+            }
         })
 
     except Exception as e:
