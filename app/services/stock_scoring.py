@@ -351,6 +351,40 @@ class StockScoringEngine:
         combined = pd.concat(all_predictions, ignore_index=True)
         return self._ensemble_predictions(combined, ensemble_method)
 
+    def _live_ml_predictions(self, trade_date: str, model_ids: List[str],
+                             ensemble_method: str = 'average') -> pd.DataFrame:
+        """预加载预测缺失时，现场运行模型预测。"""
+        try:
+            from app.services.ml_models import MLModelManager
+
+            ml_manager = MLModelManager()
+            all_predictions = []
+
+            for model_id in model_ids:
+                predictions = ml_manager.predict(
+                    model_id=model_id,
+                    trade_date=trade_date,
+                    strict_trade_date=True
+                )
+                if predictions.empty:
+                    logger.info(f'live predict empty: model={model_id} date={trade_date}')
+                    continue
+
+                pred_columns = ['ts_code', 'predicted_return', 'probability_score', 'rank_score']
+                live_pred = predictions[pred_columns].copy()
+                live_pred['model_id'] = model_id
+                all_predictions.append(live_pred)
+
+            if not all_predictions:
+                return pd.DataFrame()
+
+            combined = pd.concat(all_predictions, ignore_index=True)
+            return self._ensemble_predictions(combined, ensemble_method)
+
+        except Exception as e:
+            logger.warning(f'live ML prediction failed for {trade_date}: {e}')
+            return pd.DataFrame()
+
     def ml_based_selection(self, trade_date: str, model_ids: List[str],
                           top_n: int = 50, ensemble_method: str = 'average',
                           predictions_batch: pd.DataFrame = None) -> List[Dict[str, Any]]:
@@ -537,10 +571,12 @@ class StockScoringEngine:
             return self.ml_based_selection(trade_date, model_ids, top_n,
                                            ensemble_method, predictions_batch=predictions_batch)
 
-        # ML 预测
+        # ML 预测（优先预加载 batch，缺失时现场预测）
         ml_ensemble = self._ensemble_ml_predictions(
             trade_date, model_ids, ensemble_method, predictions_batch
         )
+        if ml_ensemble.empty:
+            ml_ensemble = self._live_ml_predictions(trade_date, model_ids, ensemble_method)
         if ml_ensemble.empty:
             return self.rank_stocks(composite, top_n)
 

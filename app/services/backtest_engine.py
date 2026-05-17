@@ -23,8 +23,15 @@ class BacktestEngine:
         self.scoring_engine = None
         self.portfolio_optimizer = None
         self._price_batch = None  # {(trade_date_str, ts_code): close}
+        self._price_batch_start = None
+        self._price_batch_end = None
         self._predictions_batch = None  # pre-loaded ML predictions DataFrame
+        self._pred_batch_start = None
+        self._pred_batch_end = None
+        self._pred_batch_model_ids = None
         self._factor_values_batch = None  # pre-loaded factor values DataFrame
+        self._fv_batch_start = None
+        self._fv_batch_end = None
         self._factor_scores_cache = {}  # {trade_date: factor_scores DataFrame}
         self._stock_info_cache = {}  # {ts_code: stock_info_dict}
     
@@ -403,7 +410,10 @@ class BacktestEngine:
 
     def _batch_warm_prices(self, start_date: str, end_date: str):
         """批量预加载整个回测区间的收盘价。"""
-        if self._price_batch is not None:
+        if (self._price_batch is not None
+                and self._price_batch_start is not None
+                and str(start_date) >= str(self._price_batch_start)
+                and str(end_date) <= str(self._price_batch_end)):
             return
         query = db.session.query(
             StockDailyHistory.ts_code, StockDailyHistory.trade_date, StockDailyHistory.close
@@ -415,11 +425,17 @@ class BacktestEngine:
         self._price_batch = {}
         for _, row in df.iterrows():
             self._price_batch[(str(row.trade_date)[:10], row.ts_code)] = float(row.close)
-        logger.info(f'Price batch warmed: {len(self._price_batch)} entries')
+        self._price_batch_start = str(start_date)
+        self._price_batch_end = str(end_date)
+        logger.info(f'Price batch warmed: {len(self._price_batch)} entries, {start_date} to {end_date}')
 
     def _batch_warm_predictions(self, model_ids: list, start_date: str, end_date: str):
         """批量预加载整个回测区间的 ML 预测数据。"""
-        if self._predictions_batch is not None:
+        if (self._predictions_batch is not None
+                and self._pred_batch_start is not None
+                and str(start_date) >= str(self._pred_batch_start)
+                and str(end_date) <= str(self._pred_batch_end)
+                and set(model_ids) == set(self._pred_batch_model_ids or [])):
             return
         query = db.session.query(
             MLPredictions.model_id, MLPredictions.ts_code, MLPredictions.trade_date,
@@ -432,11 +448,17 @@ class BacktestEngine:
         self._predictions_batch = pd.read_sql(query.statement, db.engine)
         if not self._predictions_batch.empty:
             self._predictions_batch['trade_date'] = pd.to_datetime(self._predictions_batch['trade_date'])
-        logger.info(f'Predictions batch warmed: {len(self._predictions_batch)} rows')
+        self._pred_batch_start = str(start_date)
+        self._pred_batch_end = str(end_date)
+        self._pred_batch_model_ids = list(model_ids)
+        logger.info(f'Predictions batch warmed: {len(self._predictions_batch)} rows, {start_date} to {end_date}')
 
     def _batch_warm_factor_values(self, start_date: str, end_date: str):
         """批量预加载整个回测区间的因子数据。"""
-        if self._factor_values_batch is not None:
+        if (self._factor_values_batch is not None
+                and self._fv_batch_start is not None
+                and str(start_date) >= str(self._fv_batch_start)
+                and str(end_date) <= str(self._fv_batch_end)):
             return
         query = db.session.query(
             FactorValues.ts_code, FactorValues.trade_date,
@@ -448,7 +470,9 @@ class BacktestEngine:
         self._factor_values_batch = pd.read_sql(query.statement, db.engine)
         if not self._factor_values_batch.empty:
             self._factor_values_batch['trade_date'] = pd.to_datetime(self._factor_values_batch['trade_date'])
-        logger.info(f'Factor values batch warmed: {len(self._factor_values_batch)} rows')
+        self._fv_batch_start = str(start_date)
+        self._fv_batch_end = str(end_date)
+        logger.info(f'Factor values batch warmed: {len(self._factor_values_batch)} rows, {start_date} to {end_date}')
 
     def _warm_stock_info(self):
         """缓存全量股票基本信息。"""
@@ -709,9 +733,11 @@ class BacktestEngine:
             years = days / 365.25
             annualized_return = (1 + total_return) ** (1 / years) - 1 if years > 0 else 0
             
-            # 波动率
+            # 波动率（根据实际调仓频率年化）
             returns_array = np.array(daily_returns)
-            volatility = np.std(returns_array) * np.sqrt(252)  # 年化波动率
+            periods_per_year = len(daily_returns) / years if years > 0 else 252
+            annual_factor = np.sqrt(max(periods_per_year, 1))
+            volatility = np.std(returns_array) * annual_factor
             
             # 夏普比率 (假设无风险利率为3%)
             risk_free_rate = 0.03
