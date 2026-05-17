@@ -715,6 +715,42 @@ def hybrid_auto_config():
 
         all_models = MLModelDefinition.query.filter_by(is_active=True).all()
 
+        # 2b. 对于无预测记录的模型，在窗口内采样多个日期现场预测
+        unpredicted_ids = [m.model_id for m in all_models if pred_counts.get(m.model_id, 0) == 0]
+        if unpredicted_ids:
+            try:
+                from app.services.ml_models import MLModelManager
+                from app.models import FactorValues
+
+                fv_dates = db.session.query(FactorValues.trade_date).filter(
+                    FactorValues.trade_date >= pd.to_datetime(start_date).date(),
+                    FactorValues.trade_date <= pd.to_datetime(evaluation_date).date()
+                ).distinct().order_by(FactorValues.trade_date).all()
+                fv_dates = [d[0] for d in fv_dates]
+
+                # 采样：最多取4个日期均匀覆盖窗口
+                sample_step = max(1, len(fv_dates) // 4) if fv_dates else 1
+                sampled_dates = fv_dates[::sample_step][:4]
+                if not sampled_dates:
+                    sampled_dates = [pd.to_datetime(evaluation_date).date()]
+
+                live_mgr = MLModelManager()
+                for mid in unpredicted_ids:
+                    per_date_counts = []
+                    for dt in sampled_dates:
+                        live_result = live_mgr.predict(
+                            model_id=mid, trade_date=str(dt), strict_trade_date=True
+                        )
+                        if not live_result.empty:
+                            per_date_counts.append(len(live_result))
+                    if per_date_counts:
+                        # 用单日平均预测数（与预存预测的口径一致，不做全窗口外推）
+                        avg_per_date = int(sum(per_date_counts) / len(per_date_counts))
+                        pred_counts[mid] = avg_per_date
+                        logger.info(f'Live prediction for model {mid}: avg {avg_per_date} stocks/date across {len(per_date_counts)} dates')
+            except Exception as e:
+                logger.warning(f'Live prediction probe failed: {e}')
+
         # 3. 模型评分
         def model_quality(m) -> float:
             if m.feature_importance and len(m.feature_importance) > 0:
@@ -744,8 +780,8 @@ def hybrid_auto_config():
             })
 
         # 4. 筛选管线
-        # 4a. 必须有预测记录
-        candidates = [c for c in candidates if c['prediction_count'] > 0]
+        # 4a. 必须有质量分（有预测记录或现场预测成功）
+        candidates = [c for c in candidates if c['quality_score'] > 0]
 
         # 4b. 必须与选中因子有交集（至少 1 个公共因子）
         candidates = [c for c in candidates if c['factor_overlap'] > 0]
