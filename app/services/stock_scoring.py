@@ -1,3 +1,4 @@
+import traceback
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
@@ -460,15 +461,16 @@ class StockScoringEngine:
     def _determine_optimal_blend_weight(self, trade_date: str,
                                          factor_list: list,
                                          model_ids: list,
-                                         forward_period: int = 5) -> float:
+                                         forward_period: int = 5,
+                                         start_date: str = None) -> float:
         """基于 IC_IR 和 feature_importance 自动确定因子/模型混合权重。"""
         try:
             from app.services.factor_optimizer import FactorOptimizer
-            from app.models import MLModelDefinition
+            from app.models import MLModelDefinition, MLPredictions
 
-            optimizer = FactorOptimizer()
-            effectiveness = optimizer._get_latest_effectiveness(
-                forward_period=forward_period, evaluation_date=trade_date
+            effectiveness = FactorOptimizer()._get_latest_effectiveness(
+                forward_period=forward_period, evaluation_date=trade_date,
+                start_date=start_date
             )
             factor_ic_irs = [
                 abs(f['ic_ir']) for f in effectiveness
@@ -483,10 +485,13 @@ class StockScoringEngine:
                     vals = [abs(v) for v in mdef.feature_importance.values()]
                     model_qs.append(float(np.mean(vals)))
                 elif mdef:
-                    # 无 feature_importance 时用预测数量作为质量代理
-                    pred_count = MLPredictions.query.filter_by(model_id=mid).count()
-                    if pred_count > 0:
-                        model_qs.append(min(pred_count / 50000.0, 0.5))
+                    q = MLPredictions.query.filter(
+                        MLPredictions.model_id == mid,
+                        MLPredictions.trade_date >= start_date if start_date else True,
+                        MLPredictions.trade_date <= trade_date
+                    ).count()
+                    if q > 0:
+                        model_qs.append(min(q / 50000.0, 0.5))
             avg_ml_q = float(np.mean(model_qs)) if model_qs else 0.2
 
             def _q(x):
@@ -499,6 +504,7 @@ class StockScoringEngine:
                 return 0.5
             return float(np.clip(fs / total, 0.2, 0.8))
         except Exception:
+            logger.warning(f'blend_weight fallback to 0.5: {traceback.format_exc()}')
             return 0.5
 
     def hybrid_selection(self, trade_date: str,
@@ -510,7 +516,8 @@ class StockScoringEngine:
                          factor_scoring_weights: dict = None,
                          ensemble_method: str = 'average',
                          predictions_batch: pd.DataFrame = None,
-                         factor_values_batch: pd.DataFrame = None) -> list:
+                         factor_values_batch: pd.DataFrame = None,
+                         start_date: str = None) -> list:
         """混合因子 + ML 选股：并行跑两路打分，归一化后按权重融合排名。"""
         factor_list = factor_list or []
         model_ids = model_ids or []
@@ -552,7 +559,8 @@ class StockScoringEngine:
 
         if blend_weight is None:
             blend_weight = self._determine_optimal_blend_weight(
-                trade_date, factor_list, model_ids
+                trade_date, factor_list, model_ids,
+                start_date=start_date
             )
 
         blend_df['factor_norm'] = self._normalize_scores(blend_df['factor_score'])

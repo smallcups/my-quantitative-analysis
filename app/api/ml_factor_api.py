@@ -650,6 +650,7 @@ def hybrid_scoring():
             factor_scoring_method=factor_scoring_method,
             factor_scoring_weights=weights,
             ensemble_method=ensemble_method,
+            start_date=data.get('start_date'),
         )
 
         if not top_stocks:
@@ -696,15 +697,20 @@ def hybrid_auto_config():
                 'error': '因子权重计算失败: ' + factor_result['error']
             }), 500
 
+        # 使用 get_optimized_weights 推算后的 start_date
+        start_date = factor_result.get('start_date', start_date)
         selected_factor_ids = set(factor_result.get('weights', {}).keys())
 
-        # 2. 模型侧：一次查询获取所有模型 + 预测数量
+        # 2. 模型侧：一次查询获取预测数量（限定在回测窗口内）
         from app.models import MLModelDefinition, MLPredictions
         from sqlalchemy import func
 
         pred_counts = dict(db.session.query(
             MLPredictions.model_id,
             func.count().label('cnt')
+        ).filter(
+            MLPredictions.trade_date >= start_date,
+            MLPredictions.trade_date <= evaluation_date
         ).group_by(MLPredictions.model_id).all())
 
         all_models = MLModelDefinition.query.filter_by(is_active=True).all()
@@ -778,7 +784,8 @@ def hybrid_auto_config():
         blend_weight = 0.5
         if factor_ids and model_ids:
             blend_weight = get_scoring_engine()._determine_optimal_blend_weight(
-                evaluation_date, factor_ids, model_ids, forward_period
+                evaluation_date, factor_ids, model_ids, forward_period,
+                start_date=start_date
             )
 
         return jsonify({
@@ -1134,6 +1141,7 @@ def integrated_portfolio_selection():
                 factor_scoring_method=data.get('factor_scoring_method', 'rank_ic'),
                 factor_scoring_weights=weights_config,
                 ensemble_method='average',
+                start_date=data.get('start_date'),
             )
             if not selected_stocks:
                 return jsonify({'error': '混合选股失败'}), 500

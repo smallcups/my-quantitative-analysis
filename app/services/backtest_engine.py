@@ -104,27 +104,25 @@ class BacktestEngine:
                 except Exception as e:
                     logger.warning(f'IC weight pre-compute failed: {e}')
 
-            # 预计算所有日期的因子分数（消除逐日 pandas 过滤）
+            # 生成交易日期（调仓日）
+            trade_dates = self._generate_trade_dates(start_date, end_date, rebalance_frequency)
+
+            # 预计算调仓日的因子分数（消除逐日 pandas 过滤）
             if self._factor_values_batch is not None and strategy_config.get('factor_list'):
                 use_factors = strategy_config['factor_list']
                 scoring = self._get_scoring_engine()
                 wt = strategy_config.get('weights') or strategy_config.get('factor_weights') or {}
                 sm = strategy_config.get('scoring_method', 'equal_weight')
                 self._factor_scores_cache.clear()
-                all_dates = sorted(self._factor_values_batch['trade_date'].unique())
-                for d in all_dates:
-                    d_str = pd.Timestamp(d).strftime('%Y-%m-%d')
+                for d_str in trade_dates:
                     fs = scoring.calculate_factor_scores(d_str, use_factors,
                                                          factor_values_batch=self._factor_values_batch)
                     if not fs.empty:
                         comp = scoring.calculate_composite_score(fs, wt, sm)
                         if not comp.empty:
                             self._factor_scores_cache[d_str] = comp
-                logger.info('Factor scores pre-computed for {} dates'.format(
+                logger.info('Factor scores pre-computed for {} rebalance dates'.format(
                     len(self._factor_scores_cache)))
-
-            # 生成交易日期
-            trade_dates = self._generate_trade_dates(start_date, end_date, rebalance_frequency)
 
             # 初始化回测状态
             portfolio_values = []
@@ -142,7 +140,7 @@ class BacktestEngine:
                 
                 try:
                     # 获取当日选股结果
-                    selected_stocks = self._get_stock_selection(strategy_config, trade_date)
+                    selected_stocks = self._get_stock_selection(strategy_config, trade_date, start_date)
                     
                     if not selected_stocks:
                         logger.warning(f"日期 {trade_date} 没有选出股票")
@@ -318,7 +316,7 @@ class BacktestEngine:
         return normalized
 
     def _get_stock_selection(self, strategy_config: Dict[str, Any],
-                           trade_date: str) -> List[Dict[str, Any]]:
+                           trade_date: str, start_date: str = None) -> List[Dict[str, Any]]:
         """获取股票选择结果"""
         try:
             selection_method = strategy_config.get('selection_method', 'factor_based')
@@ -364,7 +362,8 @@ class BacktestEngine:
                     factor_scoring_weights=weights_config,
                     ensemble_method='average',
                     predictions_batch=self._predictions_batch,
-                    factor_values_batch=self._factor_values_batch
+                    factor_values_batch=self._factor_values_batch,
+                    start_date=start_date
                 )
 
             else:
