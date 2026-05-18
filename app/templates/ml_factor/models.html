@@ -247,13 +247,13 @@
                     <div class="col-md-4">
                         <div class="mb-3">
                             <label for="trainingStartDate" class="form-label">Start Date</label>
-                            <input type="date" class="form-control" id="trainingStartDateInput" value="2023-01-01">
+                            <input type="date" class="form-control" id="trainingStartDateInput" value="2025-01-02">
                         </div>
                     </div>
                     <div class="col-md-4">
                         <div class="mb-3">
                             <label for="trainingEndDate" class="form-label">End Date</label>
-                            <input type="date" class="form-control" id="trainingEndDateInput" value="2024-01-01">
+                            <input type="date" class="form-control" id="trainingEndDateInput" value="2025-12-31">
                         </div>
                     </div>
                     <div class="col-md-4">
@@ -642,8 +642,8 @@ function showTrainingModal(model) {
     
     // 设置模型信息
     document.getElementById('trainingModelName').textContent = model.model_name;
-    document.getElementById('trainingStartDateInput').value = '2023-01-01';
-    document.getElementById('trainingEndDateInput').value = '2024-01-01';
+    document.getElementById('trainingStartDateInput').value = '2025-01-02';
+    document.getElementById('trainingEndDateInput').value = '2025-12-31';
     
     // 显示模态框
     const modal = new bootstrap.Modal(document.getElementById('trainingModal'));
