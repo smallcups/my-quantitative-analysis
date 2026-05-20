@@ -252,6 +252,16 @@
                             </div>
                         </div>
                     </div>
+                    <!-- 基准对照指标 -->
+                    <div class="row mb-3" id="benchmarkMetricsRow" style="display:none;">
+                        <div class="col-12"><small class="text-muted">vs CSI 300</small></div>
+                        <div class="col-md-2"><div class="text-center"><h6 class="text-muted" id="bmReturn">--</h6><small>BM Return</small></div></div>
+                        <div class="col-md-2"><div class="text-center"><h6 class="text-muted" id="bmAnnual">--</h6><small>BM Annual</small></div></div>
+                        <div class="col-md-2"><div class="text-center"><h6 class="text-muted" id="bmMaxDD">--</h6><small>BM Drawdown</small></div></div>
+                        <div class="col-md-2"><div class="text-center"><h6 id="excessReturn" style="color:#198754">--</h6><small>Excess Return</small></div></div>
+                        <div class="col-md-2"><div class="text-center"><h6 class="text-muted" id="infoRatio">--</h6><small>Info Ratio</small></div></div>
+                        <div class="col-md-2"><div class="text-center"><h6 class="text-muted" id="trackingError">--</h6><small>Tracking Err</small></div></div>
+                    </div>
 
                     <!-- 收益曲线图 -->
                     <div class="row mb-4">
@@ -852,11 +862,25 @@ function displayBacktestResults(data) {
     
     // 更新关键指标
     document.getElementById('totalReturn').textContent = (totalReturn * 100).toFixed(2) + '%';
-    document.getElementById('annualReturn').textContent = ((performanceMetrics.annual_return || 0) * 100).toFixed(2) + '%';
+    document.getElementById('annualReturn').textContent = ((performanceMetrics.annualized_return || performanceMetrics.annual_return || 0) * 100).toFixed(2) + '%';
     document.getElementById('maxDrawdown').textContent = ((performanceMetrics.max_drawdown || 0) * 100).toFixed(2) + '%';
     document.getElementById('sharpeRatio').textContent = (performanceMetrics.sharpe_ratio || 0).toFixed(2);
     document.getElementById('volatility').textContent = ((performanceMetrics.volatility || 0) * 100).toFixed(2) + '%';
     document.getElementById('winRate').textContent = ((performanceMetrics.win_rate || 0) * 100).toFixed(1) + '%';
+
+    // 基准指标
+    const bm = data.benchmark_returns || {};
+    if (bm.name) {
+        document.getElementById('benchmarkMetricsRow').style.display = 'flex';
+        document.getElementById('bmReturn').textContent = ((bm.total_return || 0) * 100).toFixed(2) + '%';
+        document.getElementById('bmAnnual').textContent = ((bm.annualized_return || 0) * 100).toFixed(2) + '%';
+        document.getElementById('bmMaxDD').textContent = ((bm.max_drawdown || 0) * 100).toFixed(2) + '%';
+        const excess = (performanceMetrics.excess_return != null) ? performanceMetrics.excess_return : (totalReturn - (bm.total_return || 0));
+        document.getElementById('excessReturn').textContent = (excess >= 0 ? '+' : '') + (excess * 100).toFixed(2) + '%';
+        document.getElementById('excessReturn').style.color = excess >= 0 ? '#198754' : '#dc3545';
+        document.getElementById('infoRatio').textContent = (performanceMetrics.information_ratio || 0).toFixed(2);
+        document.getElementById('trackingError').textContent = ((performanceMetrics.tracking_error || 0) * 100).toFixed(2) + '%';
+    }
 
     // 标注权重信息
     const scoringMethod = document.getElementById('scoringMethod').value;
@@ -874,13 +898,17 @@ function displayBacktestResults(data) {
 
     // 处理图表数据
     const portfolioValues = data.portfolio_values || [];
-    const benchmarkReturns = data.benchmark_returns || [];
-    
-    // 转换为图表需要的格式
-    const returnsData = portfolioValues.map((item, index) => ({
+    const initCap = data.initial_capital || 1000000;
+
+    const returnsData = portfolioValues.map((item) => ({
         date: item.date,
-        portfolio: item.total_value / (data.initial_capital || 1000000),
-        benchmark: benchmarkReturns[index] ? benchmarkReturns[index].value : 1.0
+        portfolio: item.total_value / initCap
+    }));
+
+    // 基准日线数据（给图表用）
+    const benchmarkDailyData = (bm.daily_data || []).map(d => ({
+        date: d.date,
+        value: 1 + (d['return'] || 0)
     }));
     
     // 计算回撤数据
@@ -902,7 +930,7 @@ function displayBacktestResults(data) {
     const returnsDistribution = generateReturnsDistributionFromDaily(data.daily_returns || []);
     
     // 绘制图表
-    drawReturnsChart(returnsData);
+    drawReturnsChart(returnsData, benchmarkDailyData);
     drawDrawdownChart(drawdownData);
     drawRollingReturnsChart(rollingReturns);
     drawIndustryChart(industryDistribution);
@@ -1140,49 +1168,58 @@ function generateMockPositions() {
 }
 
 // 绘制收益曲线图
-function drawReturnsChart(data) {
+function drawReturnsChart(data, benchmarkData) {
     const chart = echarts.init(document.getElementById('returnsChart'));
-    
-    const option = {
-        title: {
-            text: 'Cumulative Return Curve',
-            left: 'center'
-        },
+    const hasBM = benchmarkData && benchmarkData.length > 0;
+
+    var series = [{
+        name: 'Strategy',
+        type: 'line',
+        data: data.map(function(d) { return d.portfolio; }),
+        lineStyle: { width: 2, color: '#0d6efd' },
+        itemStyle: { color: '#0d6efd' }
+    }];
+
+    if (hasBM) {
+        series.push({
+            name: 'CSI 300',
+            type: 'line',
+            data: benchmarkData.map(function(d) { return d.value; }),
+            lineStyle: { width: 2, color: '#6c757d', type: 'dashed' },
+            itemStyle: { color: '#6c757d' }
+        });
+    }
+
+    var option = {
+        title: { text: 'Cumulative Return vs CSI 300', left: 'center' },
         tooltip: {
-            trigger: 'axis'
+            trigger: 'axis',
+            formatter: function(params) {
+                var s = params[0].axisValue + '<br/>';
+                params.forEach(function(p) {
+                    s += p.marker + ' ' + p.seriesName + ': ' + ((p.value - 1) * 100).toFixed(2) + '%<br/>';
+                });
+                return s;
+            }
         },
         legend: {
-            data: ['Strategy Return', 'Benchmark Return'],
+            data: hasBM ? ['Strategy', 'CSI 300'] : ['Strategy'],
             bottom: 0
         },
         xAxis: {
             type: 'category',
-            data: data.map(d => d.date)
+            data: data.map(function(d) { return d.date; }),
+            axisLabel: { rotate: 30, fontSize: 10 }
         },
         yAxis: {
             type: 'value',
             axisLabel: {
-                formatter: function(value) {
-                    return ((value - 1) * 100).toFixed(1) + '%';
-                }
+                formatter: function(value) { return ((value - 1) * 100).toFixed(0) + '%'; }
             }
         },
-        series: [
-            {
-                name: 'Strategy Return',
-                type: 'line',
-                data: data.map(d => d.portfolio),
-                lineStyle: { width: 2 }
-            },
-            {
-                name: 'Benchmark Return',
-                type: 'line',
-                data: data.map(d => d.benchmark),
-                lineStyle: { width: 2 }
-            }
-        ]
+        series: series
     };
-    
+
     chart.setOption(option);
 }
 

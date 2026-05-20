@@ -217,7 +217,7 @@ class BacktestEngine:
                     'daily_positions': [],
                     'daily_turnover': [],
                     'performance_metrics': {},
-                    'benchmark_returns': []
+                    'benchmark_returns': {}
                 }
             
             # 计算回测指标（与顶层 total_return 统一以 initial_capital 为分母）
@@ -226,9 +226,46 @@ class BacktestEngine:
                 initial_capital=initial_capital
             )
             
-            # 获取基准收益
-            benchmark_returns = self._get_benchmark_returns(start_date, end_date)
-            
+            # 获取基准收益（与策略调仓日对齐）
+            benchmark_returns = self._get_benchmark_returns(
+                start_date, end_date, portfolio_values=portfolio_values
+            )
+
+            # 超额收益 & 信息比率
+            bench_total = benchmark_returns.get('total_return', 0) if isinstance(benchmark_returns, dict) else 0
+            excess_return = performance_metrics.get('total_return', 0) - bench_total
+            strategy_annual = performance_metrics.get('annualized_return', 0)
+            bench_annual = benchmark_returns.get('annualized_return', 0) if isinstance(benchmark_returns, dict) else 0
+            excess_annual = strategy_annual - bench_annual
+
+            aligned = benchmark_returns.get('aligned_returns', []) if isinstance(benchmark_returns, dict) else []
+            if len(aligned) >= 2 and len(daily_returns) >= len(aligned) - 1:
+                bench_period_rets = [(aligned[i+1]['value'] - aligned[i]['value'])
+                                     / (1 + aligned[i]['value'])
+                                     for i in range(len(aligned) - 1)]
+                if len(bench_period_rets) == len(daily_returns):
+                    tracking_errors = [daily_returns[i] - bench_period_rets[i]
+                                       for i in range(len(daily_returns))]
+                    days = (pd.to_datetime(end_date) - pd.to_datetime(start_date)).days
+                    years = max(days / 365.25, 0.01)
+                    periods_per_year = len(daily_returns) / years
+                    annual_factor = np.sqrt(max(periods_per_year, 1))
+                    te = float(np.std(tracking_errors) * annual_factor)
+                    info_ratio = (excess_annual / te) if te > 0 else 0.0
+                else:
+                    te = info_ratio = 0.0
+            else:
+                te = info_ratio = 0.0
+
+            performance_metrics['excess_return'] = excess_return
+            performance_metrics['excess_annual'] = excess_annual
+            performance_metrics['benchmark_return'] = bench_total
+            performance_metrics['benchmark_annual'] = bench_annual
+            performance_metrics['benchmark_volatility'] = benchmark_returns.get('volatility', 0.0) if isinstance(benchmark_returns, dict) else 0.0
+            performance_metrics['benchmark_max_dd'] = benchmark_returns.get('max_drawdown', 0.0) if isinstance(benchmark_returns, dict) else 0.0
+            performance_metrics['tracking_error'] = te
+            performance_metrics['information_ratio'] = info_ratio
+
             return {
                 'success': True,
                 'strategy_config': strategy_config,
@@ -781,16 +818,79 @@ class BacktestEngine:
             logger.error(f"计算回测指标失败: {e}")
             return {}
     
-    def _get_benchmark_returns(self, start_date: str, end_date: str) -> List[Dict[str, Any]]:
-        """获取基准收益率 (使用沪深300指数)"""
+    def _get_benchmark_returns(self, start_date: str, end_date: str,
+                               portfolio_values: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """获取沪深300基准收益率，与策略调仓日对齐。"""
         try:
-            # 这里可以实现获取基准指数数据的逻辑
-            # 暂时返回空列表
-            return []
-            
+            query = db.session.query(
+                StockDailyHistory.trade_date, StockDailyHistory.close
+            ).filter(
+                StockDailyHistory.ts_code == '000300.SH',
+                StockDailyHistory.trade_date >= start_date,
+                StockDailyHistory.trade_date <= end_date
+            ).order_by(StockDailyHistory.trade_date)
+
+            rows = query.all()
+            if not rows:
+                return {}
+
+            bench_dates = [r[0] for r in rows]
+            bench_closes = [float(r[1]) for r in rows]
+            bench_start = bench_closes[0]
+
+            daily_data = [
+                {'date': str(d), 'close': c, 'return': (c - bench_start) / bench_start}
+                for d, c in zip(bench_dates, bench_closes)
+            ]
+
+            # 与策略调仓日对齐
+            aligned_returns = []
+            if portfolio_values:
+                for pv in portfolio_values:
+                    pv_date_str = str(pv['date'])[:10]
+                    match = bench_closes[-1]
+                    for i, d in enumerate(bench_dates):
+                        if str(d) == pv_date_str:
+                            match = bench_closes[i]
+                            break
+                        elif str(d) < pv_date_str:
+                            match = bench_closes[i]
+                    aligned_returns.append({
+                        'date': pv_date_str,
+                        'value': (match - bench_start) / bench_start
+                    })
+
+            # 基准指标
+            if len(bench_closes) >= 2:
+                total_ret = (bench_closes[-1] - bench_start) / bench_start
+                days = (pd.to_datetime(end_date) - pd.to_datetime(start_date)).days
+                years = max(days / 365.25, 0.01)
+                annual_ret = (1 + total_ret) ** (1 / years) - 1
+                daily_rets = [(bench_closes[i] - bench_closes[i-1]) / bench_closes[i-1]
+                              for i in range(1, len(bench_closes))]
+                vol = float(np.std(daily_rets) * np.sqrt(252)) if daily_rets else 0.0
+                peak = bench_closes[0]
+                mdd = 0.0
+                for c in bench_closes:
+                    if c > peak: peak = c
+                    dd = (peak - c) / peak
+                    if dd > mdd: mdd = dd
+            else:
+                total_ret = annual_ret = vol = mdd = 0.0
+
+            return {
+                'name': '沪深300',
+                'total_return': total_ret,
+                'annualized_return': annual_ret,
+                'volatility': vol,
+                'max_drawdown': mdd,
+                'aligned_returns': aligned_returns,
+                'daily_data': daily_data[:500],
+            }
+
         except Exception as e:
             logger.error(f"获取基准收益率失败: {e}")
-            return []
+            return {}
     
     def compare_strategies(self, strategies: List[Dict[str, Any]], 
                          start_date: str, end_date: str) -> Dict[str, Any]:
