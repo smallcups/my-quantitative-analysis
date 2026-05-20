@@ -63,7 +63,11 @@
       "Bash(Get-Process -Name \"python*\" -ErrorAction SilentlyContinue)",
       "Bash(taskkill //F //IM python.exe)",
       "Bash(taskkill //F //IM python3.exe)",
-      "Bash(pkill -f \"python.*run.py\")"
+      "Bash(pkill -f \"python.*run.py\")",
+      "Bash(mysqldump -u root -p123456 stock_cursor ml_model_definition --no-create-info --complete-insert)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(mysqldump -u root -p123456 stock_cursor ml_model_definition)",
+      "Bash(mysqldump -u root -p123456 stock_cursor factor_effectiveness stock_trade_calendar stock_company)"
     ]
   }
 }

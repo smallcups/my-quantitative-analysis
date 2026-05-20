@@ -12,13 +12,15 @@ def get_stocks():
         area = request.args.get('area')
         page = int(request.args.get('page', 1))
         page_size = min(int(request.args.get('page_size', 20)), 100)
-        
+        exclude_st = request.args.get('exclude_st', '0') == '1'
+
         # 调用服务
         result = StockService.get_stock_list(
             industry=industry,
             area=area,
             page=page,
-            page_size=page_size
+            page_size=page_size,
+            exclude_st=exclude_st
         )
         
         return jsonify({

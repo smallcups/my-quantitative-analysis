@@ -16,11 +16,18 @@ class StockService:
     
     @staticmethod
     @cached(expire=1800, key_prefix='stock_basic')
-    def get_stock_list(industry=None, area=None, page=1, page_size=20):
-        """获取股票列表"""
+    def get_stock_list(industry=None, area=None, page=1, page_size=20, exclude_st=False):
+        """获取股票列表（exclude_st=True 时屏蔽ST股票）"""
         try:
             query = StockBasic.query
-            
+
+            # 屏蔽ST股票（名称以ST或*ST开头）
+            if exclude_st:
+                query = query.filter(
+                    ~StockBasic.name.like('ST%'),
+                    ~StockBasic.name.like('*ST%')
+                )
+
             # 添加筛选条件
             if industry:
                 query = query.filter(StockBasic.industry == industry)
