@@ -33,6 +33,7 @@ class BacktestEngine:
         self._fv_batch_start = None
         self._fv_batch_end = None
         self._factor_scores_cache = {}  # {trade_date: factor_scores DataFrame}
+        self._factor_directions = {}  # {factor_id: 'positive'/'negative'}
         self._stock_info_cache = {}  # {ts_code: stock_info_dict}
     
     def _get_factor_engine(self):
@@ -120,12 +121,25 @@ class BacktestEngine:
                 scoring = self._get_scoring_engine()
                 wt = strategy_config.get('weights') or strategy_config.get('factor_weights') or {}
                 sm = strategy_config.get('scoring_method', 'equal_weight')
+
+                # 获取因子方向（IC符号），修正负向因子
+                self._factor_directions = {}
+                from app.models import FactorEffectiveness
+                eff_rows = db.session.query(
+                    FactorEffectiveness.factor_id, FactorEffectiveness.factor_direction
+                ).filter(FactorEffectiveness.factor_id.in_(use_factors)).distinct().all()
+                for r in eff_rows:
+                    if r[1]:
+                        self._factor_directions[r[0]] = r[1]
+
                 self._factor_scores_cache.clear()
                 for d_str in trade_dates:
                     fs = scoring.calculate_factor_scores(d_str, use_factors,
                                                          factor_values_batch=self._factor_values_batch)
                     if not fs.empty:
-                        comp = scoring.calculate_composite_score(fs, wt, sm)
+                        comp = scoring.calculate_composite_score(
+                            fs, wt, sm, factor_directions=self._factor_directions
+                        )
                         if not comp.empty:
                             self._factor_scores_cache[d_str] = comp
                 logger.info('Factor scores pre-computed for {} rebalance dates'.format(
@@ -434,7 +448,8 @@ class BacktestEngine:
                     if not scoring_method:
                         scoring_method = 'factor_weight' if weights_config else 'equal_weight'
                     composite_scores = self._get_scoring_engine().calculate_composite_score(
-                        factor_scores, weights_config, scoring_method
+                        factor_scores, weights_config, scoring_method,
+                        factor_directions=self._factor_directions
                     )
                     if composite_scores.empty:
                         return []

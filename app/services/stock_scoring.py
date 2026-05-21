@@ -60,25 +60,33 @@ class StockScoringEngine:
             return pd.DataFrame()
     
     def calculate_composite_score(self, factor_scores: pd.DataFrame, weights: Dict[str, float],
-                                 method: str = 'equal_weight') -> pd.DataFrame:
-        """计算综合分数"""
+                                 method: str = 'equal_weight',
+                                 factor_directions: Dict[str, str] = None) -> pd.DataFrame:
+        """计算综合分数。factor_directions 如 {'momentum_5d': 'negative'}，负向因子的z分翻转。"""
         try:
             if factor_scores.empty:
                 return pd.DataFrame()
-            
+
+            # 因子方向修正：负向因子翻转z分
+            scores = factor_scores.copy()
+            if factor_directions:
+                for fid, direction in factor_directions.items():
+                    if direction == 'negative' and fid in scores.columns:
+                        scores[fid] = -scores[fid]
+
             # 检查权重（rank_ic 和 ml_ensemble 会内部自动获取，不在此检查）
             auto_methods = ('rank_ic', 'ml_ensemble')
             if method not in auto_methods and method != 'equal_weight' and not weights:
                 logger.warning("未提供权重，使用等权重方法")
                 method = 'equal_weight'
-            
+
             # 选择评分方法
             if method not in self.scoring_methods:
                 logger.warning(f"不支持的评分方法: {method}，使用等权重方法")
                 method = 'equal_weight'
-            
+
             scoring_func = self.scoring_methods[method]
-            composite_scores = scoring_func(factor_scores, weights)
+            composite_scores = scoring_func(scores, weights)
             
             # 构建结果DataFrame
             result_df = pd.DataFrame({

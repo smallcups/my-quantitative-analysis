@@ -157,7 +157,6 @@ async function calculateScoring() {
                     blendNote.style.display = 'block';
                 }
             }
-            }
             renderScoringResults(results);
         } else {
             showError('scoringResults', 'Scoring calculation failed: ' + response.data.error);
